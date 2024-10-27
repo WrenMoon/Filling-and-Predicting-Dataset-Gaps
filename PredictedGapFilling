@@ -1,94 +1,124 @@
 import torch
+import torch.nn as nn
+import torch.optim as optim
 import numpy as np
 import pandas as pd
+import shutil
+from sklearn.preprocessing import MinMaxScaler
+from tqdm import tqdm_notebook as tqdm
+
+from tensorboardX import SummaryWriter
 import matplotlib.pyplot as plt
 
 from darts import TimeSeries
 from darts.dataprocessing.transformers import Scaler
-from darts.models import TransformerModel
+from darts.models import TransformerModel, ExponentialSmoothing
+from darts.metrics import mape
+from darts.utils.statistics import check_seasonality, plot_acf
 from darts.datasets import AirPassengersDataset
 
 import warnings
+
 warnings.filterwarnings("ignore")
 import logging
+
 logging.disable(logging.CRITICAL)
 
-# Load and prepare data
-series = AirPassengersDataset().load().astype(np.float32)
 
-# Normalize the time series
-scaler = Scaler()
-series_scaled = scaler.fit_transform(series)
 
-print(f"The 'air passengers' dataset has {len(series)} data points.")
 
-# Define and train the model
-my_model = TransformerModel(
-    input_chunk_length=12,
-    output_chunk_length=1,
-    batch_size=32,
-    n_epochs=200,
-    model_name="air_transformer",
-    nr_epochs_val_period=10,
-    d_model=16,
-    nhead=8,
-    num_encoder_layers=2,
-    num_decoder_layers=2,
-    dim_feedforward=128,
-    dropout=0.1,
-    activation="relu",
-    random_state=42,
-    save_checkpoints=True,
-    force_reset=True,
-)
-my_model.fit(series=series_scaled, verbose=True)
+def fillGap(train, val, series, gap_start, gap_end, gap_mid, gap_length):
 
-# Function to create a gap, forecast and backtest
-def fill_gap_with_forecast_backtest(model, series, gap_start_idx, gap_end_idx):
-    # Split the series into segments before and after the gap
-    series_before_gap = series[:gap_start_idx]
-    series_after_gap = series[gap_end_idx:]
-    gap_len = gap_end_idx - gap_start_idx
-    forecast_len = gap_len // 2  # Forecast up to midpoint of the gap
-    backtest_len = gap_len - forecast_len  # Backtest the remaining half
 
-    # Forecast up to the midpoint of the gap
-    forecast_series = model.predict(n=forecast_len, series=series_before_gap)
 
-    # Concatenate to create a continuous series up to the midpoint
-    mid_series = series_before_gap.concatenate(forecast_series)
+# Normalize the time series (note: we avoid fitting the transformer on the validation set)
+# Change name
+    scaler = Scaler()
+    train_scaled = scaler.fit_transform(train)
+    val_scaled = scaler.transform(val)
+    series_scaled = scaler.transform(series)
 
-    # Check time index names for debugging
-    print("Series Before Gap Time Index:", series_before_gap.time_index)
-    print("Forecast Series Time Index:", forecast_series.time_index)
-    print("Mid Series Time Index:", mid_series.time_index)
+    my_model = TransformerModel(
+        input_chunk_length=12,
+        output_chunk_length=1,
+        batch_size=32,
+        n_epochs=200,
+        model_name="air_transformer",
+        nr_epochs_val_period=10,
+        d_model=16,
+        nhead=8,
+        num_encoder_layers=2,
+        num_decoder_layers=2,
+        dim_feedforward=128,
+        dropout=0.1,
+        activation="relu",
+        random_state=42,
+        save_checkpoints=True,
+        force_reset=True,
+    )
 
-    # Backtest for the second half of the gap
-    backtest_series = model.historical_forecasts(
-        series=mid_series,
-        start=mid_series.time_index[-1],  # Start forecasting from the last timestamp of mid_series
-        forecast_horizon=1,
+    my_model.fit(series=train_scaled, val_series=val_scaled, verbose=True)
+
+
+    # this function evaluates a model on a given validation set for n time-steps
+    def eval_model(model, n, series, val_series):
+        pred_series = model.predict(n=n)
+        plt.figure(figsize=(8, 5))
+        series.plot(label="actual")
+        pred_series.plot(label="forecast")
+        plt.title("MAPE: {:.2f}%".format(mape(pred_series, val_series)))
+        plt.legend()
+
+    eval_model(my_model, gap_length, series_scaled, val_scaled)
+
+    best_model = TransformerModel.load_from_checkpoint(
+        model_name="air_transformer", best=True
+    )
+    eval_model(best_model, gap_length, series_scaled, val_scaled)
+
+    backtest_series = my_model.historical_forecasts(
+        series=series_scaled,
+        start=pd.Timestamp("19590101"),
+        forecast_horizon=6,
         retrain=False,
         verbose=True,
-    )[:backtest_len]
+    )
 
-    # Check backtest series time index
-    print("Backtest Series Time Index:", backtest_series.time_index)
-
-    # Concatenate the forecast and backtest results to fill the entire gap
-    gap_filled_series = mid_series.concatenate(backtest_series).concatenate(series_after_gap)
-
-    # Plot results
-    plt.figure(figsize=(10, 6))
-    series.plot(label="Actual")
-    gap_filled_series.plot(label="Gap Filled (Forecast + Backtest)", color="orange")
-    plt.axvline(series.time_index[gap_start_idx], color="green", linestyle="--", label="Gap Start")
-    plt.axvline(series.time_index[gap_end_idx - 1], color="red", linestyle="--", label="Gap End")
+    plt.figure(figsize=(8, 5))
+    series_scaled.plot(label="actual", lw=2)
+    backtest_series.plot(label="backtest", lw=2)
     plt.legend()
-    plt.title("Gap filling with Forecast (first half) & Backtest (second half)")
-    plt.show()
+    plt.title("Backtest, starting Jan 1959, with a 6-months horizon")
+    print(
+        "MAPE: {:.2f}%".format(
+            mape(
+                scaler.inverse_transform(series_scaled),
+                scaler.inverse_transform(backtest_series),
+            )
+        )
+    )
 
-# Define gap start and end indices
-gap_start_idx = 90  # Adjust as needed
-gap_end_idx = 110   # Adjust as needed
-fill_gap_with_forecast_backtest(my_model, series_scaled, gap_start_idx, gap_end_idx)
+
+# Read data:
+series = AirPassengersDataset().load().astype(np.float32)
+
+# Create training and validation sets:
+
+"the 'air passengers' dataset has {} data points".format(len(series))
+
+
+gap_start  = pd.Timestamp("19560101")
+gap_end = pd.Timestamp("19610101")
+gap_mid = pd.Timestamp("19590601")
+
+gap_length = (gap_end.year - gap_start.year) * 12 + (gap_end.month - gap_start.month)
+
+train, val = series.split_after(gap_start)
+
+# val = series.slice(gap_start, gap_mid)
+
+
+fillGap(train, val, series, gap_start, gap_end, gap_mid, gap_length)
+
+plt.legend()
+plt.show()
