@@ -42,14 +42,14 @@ def fillGap(train, val, series, gap_start, gap_end, gap_mid, gap_length):
         input_chunk_length=12,
         output_chunk_length=1,
         batch_size=32,
-        n_epochs=200,
+        n_epochs=500,
         model_name="air_transformer",
         nr_epochs_val_period=10,
-        d_model=16,
-        nhead=8,
-        num_encoder_layers=2,
-        num_decoder_layers=2,
-        dim_feedforward=128,
+        d_model=64,
+        nhead=4,
+        num_encoder_layers=3,
+        num_decoder_layers=3,
+        dim_feedforward=512,
         dropout=0.1,
         activation="relu",
         random_state=42,
@@ -76,27 +76,27 @@ def fillGap(train, val, series, gap_start, gap_end, gap_mid, gap_length):
     )
     eval_model(best_model, gap_length, series_scaled, val_scaled)
 
-    backtest_series = my_model.historical_forecasts(
-        series=series_scaled,
-        start=pd.Timestamp("19590101"),
-        forecast_horizon=6,
-        retrain=False,
-        verbose=True,
-    )
+    # backtest_series = my_model.historical_forecasts(
+    #     series=series_scaled,
+    #     start=pd.Timestamp("19590101"),
+    #     forecast_horizon=6,
+    #     retrain=False,
+    #     verbose=True,
+    # )
 
-    plt.figure(figsize=(8, 5))
-    series_scaled.plot(label="actual", lw=2)
-    backtest_series.plot(label="backtest", lw=2)
-    plt.legend()
-    plt.title("Backtest, starting Jan 1959, with a 6-months horizon")
-    print(
-        "MAPE: {:.2f}%".format(
-            mape(
-                scaler.inverse_transform(series_scaled),
-                scaler.inverse_transform(backtest_series),
-            )
-        )
-    )
+    # plt.figure(figsize=(8, 5))
+    # series_scaled.plot(label="actual", lw=2)
+    # backtest_series.plot(label="backtest", lw=2)
+    # plt.legend()
+    # plt.title("Backtest, starting Jan 1959, with a 6-months horizon")
+    # print(
+    #     "MAPE: {:.2f}%".format(
+    #         mape(
+    #             scaler.inverse_transform(series_scaled),
+    #             scaler.inverse_transform(backtest_series),
+    #         )
+    #     )
+    # )
 
 
 # Read data:
@@ -107,8 +107,8 @@ series = AirPassengersDataset().load().astype(np.float32)
 "the 'air passengers' dataset has {} data points".format(len(series))
 
 
-gap_start  = pd.Timestamp("19560101")
-gap_end = pd.Timestamp("19610101")
+gap_start  = pd.Timestamp("19590101")
+gap_end = pd.Timestamp("19600101")
 gap_mid = pd.Timestamp("19590601")
 
 gap_length = (gap_end.year - gap_start.year) * 12 + (gap_end.month - gap_start.month)
@@ -118,7 +118,7 @@ train, val = series.split_after(gap_start)
 # val = series.slice(gap_start, gap_mid)
 
 
-fillGap(train, val, series, gap_start, gap_end, gap_mid, gap_length)
+fillGap(train, val, series, gap_start, gap_end, gap_mid, 60)
 
 plt.legend()
 plt.show()
