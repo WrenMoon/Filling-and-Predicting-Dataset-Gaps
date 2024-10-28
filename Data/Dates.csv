@@ -1,2 +1,2 @@
-id,start_date,end_date,gap_start,gap_end
-1,2013-08-14,2014-01-01,2013-11-6,2013-11-16
+start_date,end_date,gap_start,gap_end
+2013-08-14,2014-01-01,2013-08-22,2013-08-23
