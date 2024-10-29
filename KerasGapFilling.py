@@ -18,24 +18,23 @@ start_date = dates.loc[0, 'start_date']
 end_date = dates.loc[0, 'end_date']
 gap_start = dates.loc[0, 'gap_start']
 gap_end = dates.loc[0, 'gap_end']
-MainEst = dates.loc[0, 'primary_data_point']
 
 # Define station columns
 # Est_columns = ['Est1', 'Est2', 'Est3', 'Est4', MainEst, 'Est6', 'Est7', 'Est8', 'Est9']
-Est_columns = ['Est2', MainEst, 'Est8']
+Est_columns = ['Est2', 'Est5', 'Est8']
 
 # Filter data between start_date and end_date
 FilteredCSV = FilteredCSV.loc[start_date:end_date]
 
 # Set values in Est5 to NaN for the gap period
-FilteredCSV.loc[gap_start:gap_end, MainEst] = np.nan
+FilteredCSV.loc[gap_start:gap_end, 'Est5'] = np.nan
 
 # Add a week column
 FilteredCSV['week'] = FilteredCSV.index.isocalendar().week
 FullCSV['week'] = FullCSV.index.isocalendar().week
 
 # Define a function to fill missing values based on nearby points
-def fill_missing(data_row, target=MainEst):
+def fill_missing(data_row, target='Est5'):
     if pd.isna(data_row[target]):
         return data_row  # Target missing, discard during training
     
@@ -61,8 +60,8 @@ if (len(Est_columns) > 3):
 else:
     FilledTrainData = FilteredCSV.dropna()
 # Define features and target for training
-features = FilledTrainData[['week'] + [col for col in Est_columns if col != MainEst]].astype(float32)
-target = FilledTrainData[MainEst].astype(float32)
+features = FilledTrainData[['week'] + [col for col in Est_columns if col != 'Est5']].astype(float32)
+target = FilledTrainData['Est5'].astype(float32)
 X_train = features.values
 y_train = target.values
 
@@ -92,7 +91,7 @@ model.compile(optimizer='adam', loss='mean_squared_error', metrics=['mean_absolu
 model.fit(X_train, y_train, epochs=1000, batch_size=32, validation_split=0.2, verbose=2)
 
 # Prepare data for predictions with missing handling
-def fill_for_prediction(row, target=MainEst):
+def fill_for_prediction(row, target='Est5'):
     if not row.drop(target).isna().all():
         # Use mean of available points or one point if it's the only one available
         available_points = row.drop(target).dropna()
@@ -102,7 +101,7 @@ def fill_for_prediction(row, target=MainEst):
     return row
 
 FullCSV[Est_columns] = FullCSV[Est_columns].apply(fill_for_prediction, axis=1)
-X_complete = FullCSV[['week'] + [col for col in Est_columns if col != MainEst]].astype(float32)
+X_complete = FullCSV[['week'] + [col for col in Est_columns if col != 'Est5']].astype(float32)
 X_complete = scaler.transform(X_complete)
 
 # Predict all values including where Est5 was originally NaN
@@ -116,7 +115,7 @@ observed_bias = 0.01
 FullCSV['PredictedData'] -= observed_bias  # Adjust predictions
 
 # Calculate MAPE only on valid predictions
-y_true = FullCSV[MainEst].values  # True values (including NaNs)
+y_true = FullCSV['Est5'].values  # True values (including NaNs)
 y_pred = FullCSV['PredictedData'].values.flatten()  # Predictions
 mask = ~np.isnan(y_true) & ~np.isnan(y_pred)
 y_true_filtered = y_true[mask]

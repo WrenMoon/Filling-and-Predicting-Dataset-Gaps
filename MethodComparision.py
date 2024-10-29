@@ -11,12 +11,11 @@ start_date = pd.to_datetime(dates.loc[0, 'start_date'])
 end_date = pd.to_datetime(dates.loc[0, 'end_date'])
 gap_start = pd.to_datetime(dates.loc[0, 'gap_start'])
 gap_end = pd.to_datetime(dates.loc[0, 'gap_end'])
-MainEst = dates.loc[0, 'primary_data_point']
 
 print(start_date, end_date, gap_start, gap_end)
 
 # Select the relevant data
-values = data[MainEst].loc[start_date:end_date]
+values = data['Est5'].loc[start_date:end_date]
 
 # Create a mask for the gap
 mask = (values.index >= gap_start) & (values.index <= gap_end)
@@ -33,7 +32,7 @@ filled_values['Linear Interpolation'] = gapped_values.interpolate()
 
 # Mean Imputation
 mean_value = values.mean()
-filled_values['Mean Imputation'] = gapped_values.fillna(mean_value)
+# filled_values['Mean Imputation'] = gapped_values.fillna(mean_value)
 
 # Spline Interpolation
 filled_values['Cubic Spline'] = gapped_values.interpolate(method='spline', order=3)
