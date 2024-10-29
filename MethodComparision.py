@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 import numpy as np
 
@@ -6,10 +7,10 @@ data = pd.read_csv('Data/Chlor_A data.csv', index_col=0, parse_dates=True)
 dates = pd.read_csv('Data/Dates.csv')
 
 # Define the date range and create NaNs
-start_date = dates.loc[0, 'start_date']
-end_date = dates.loc[0, 'end_date']
-gap_start = dates.loc[0, 'gap_start']
-gap_end = dates.loc[0, 'gap_end']
+start_date = pd.to_datetime(dates.loc[0, 'start_date'])
+end_date = pd.to_datetime(dates.loc[0, 'end_date'])
+gap_start = pd.to_datetime(dates.loc[0, 'gap_start'])
+gap_end = pd.to_datetime(dates.loc[0, 'gap_end'])
 
 print(start_date, end_date, gap_start, gap_end)
 
@@ -32,10 +33,10 @@ mean_value = values.mean()
 filled_values['Mean Imputation'] = gapped_values.fillna(mean_value)
 
 # Spline Interpolation
-filled_values['Cubic Spline'] = gapped_values.interpolate(method='spline', order=3)  # Cubic Spline
+filled_values['Cubic Spline'] = gapped_values.interpolate(method='spline', order=3)
 
 # Polynomial Interpolation
-filled_values['Polynomial'] = gapped_values.interpolate(method='polynomial', order=3)  # Polynomial of degree 3
+filled_values['Polynomial'] = gapped_values.interpolate(method='polynomial', order=3)
 
 # Cubic Interpolation
 filled_values['Cubic'] = gapped_values.interpolate(method='cubic')
@@ -43,7 +44,18 @@ filled_values['Cubic'] = gapped_values.interpolate(method='cubic')
 # Save filled values to a DataFrame
 filled_df = pd.DataFrame(filled_values)
 
-# Save the filled DataFrame to a CSV file
-filled_df.to_csv('Data/Filled_Chlorophyll_Data.csv')
+# Load the existing filled DataFrame from CSV (if it exists)
+filled_csv_path = 'Data/Filled_Chlorophyll_Data.csv'
+if os.path.exists(filled_csv_path):
+    existing_filled_df = pd.read_csv(filled_csv_path, index_col=0, parse_dates=True)
+else:
+    existing_filled_df = pd.DataFrame(index=filled_df.index)  # Create an empty DataFrame with the same index if file doesn't exist
 
-print("Filled values calculated and saved to 'Filled_Chlorophyll_Data.csv'.")
+# Update only the columns that need to be filled
+for column in filled_df.columns:
+    existing_filled_df[column] = filled_df[column]
+
+# Save the updated DataFrame back to the CSV file
+existing_filled_df.to_csv(filled_csv_path)
+
+print("Filled values calculated and updated in 'Filled_Chlorophyll_Data.csv'.")

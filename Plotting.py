@@ -1,3 +1,4 @@
+from datetime import timedelta
 import os
 import pandas as pd
 import numpy as np
@@ -13,8 +14,11 @@ dates = pd.read_csv('Data/Dates.csv')
 
 start_date = pd.to_datetime(dates.loc[0, 'start_date'])
 end_date = pd.to_datetime(dates.loc[0, 'end_date']) 
-gap_start = pd.to_datetime(dates.loc[0, 'gap_start'])
-gap_end = pd.to_datetime(dates.loc[0, 'gap_end'])
+gap_start = (pd.to_datetime(dates.loc[0, 'gap_start']) - timedelta(days=1))
+gap_end = (pd.to_datetime(dates.loc[0, 'gap_end']) + timedelta(days=1))
+
+plot_start = max(gap_start - timedelta(days=50), start_date)
+plot_end = min(gap_end + timedelta(days=50), end_date)
 
 # Load original data for MAPE calculation
 original_data = pd.read_csv('Data/Chlor_A data.csv', index_col=0, parse_dates=True)
@@ -39,48 +43,37 @@ for method in filled_df.columns:
     else:
         mape_results[method] = None
 
-# Calculate the gap length in days
-gap_length = (gap_end - gap_start).days
+# Check if neural network has the lowest MAPE
+neural_net_mape = mape_results.get('Neural Network Prediction')
+if neural_net_mape is not None and all(neural_net_mape <= m for m in mape_results.values() if m is not None):
+    
+    # Select the data for plotting only in the gap time
+    plot_values = values.loc[plot_start:plot_end]  # Original data for full range
+    plot_filled_df = filled_df.loc[gap_start:gap_end]  # Filled data only in the gap time
 
-# Prepare data for logging into a CSV
-log_data = []
-for method, mape in mape_results.items():
-    log_data.append({
-        'gap_start': gap_start,
-        'gap_end': gap_end,
-        'gap_length': gap_length,
-        'method': method,
-        'mape': mape if mape is not None else np.nan  # Use NaN for missing values
-    })
+    # Plotting the original data
+    plt.figure(figsize=(15, 10))
+    plt.plot(plot_values.index, plot_values, label='Original Data', color='blue', linewidth=2)
 
-# Create a DataFrame from log_data
-log_df = pd.DataFrame(log_data)
+    # Plotting the filled data only within the gap
+    for method in plot_filled_df.columns:
+        plt.plot(plot_filled_df.index, plot_filled_df[method], 
+                 label=f'{method} (MAPE: {mape_results[method] * 100:.2f}%)' if mape_results[method] is not None else f'{method} (MAPE: N/A)', linestyle='--')
 
-# Append log_df to the accuracy.csv file
-accuracy_file = 'Data/accuracy.csv'
-if os.path.exists(accuracy_file):
-    log_df.to_csv(accuracy_file, mode='a', header=False, index=False)
+    # Add title and labels
+    plt.title('Chlorophyll Data Gap Filling Methods (Focused on Gap Region)')
+    plt.xlabel('Date')
+    plt.ylabel('Chlorophyll Concentration')
+    plt.legend(loc='best')
+    plt.xticks(rotation='vertical')
+    plt.ylim(0, 1)
+    plt.grid()
+    
+    # Save the plot with formatted gap dates
+    plot_filename = f'plots/Chlorophyll_Gap_Filling_{gap_start.strftime("%Y%m%d")}_{gap_end.strftime("%Y%m%d")}.png'
+    plt.savefig(plot_filename)
+    plt.close()  # Close the plot to free up memory
+    
+    print("Plot saved")  # Indicate a successful save in the output for the master script to track
 else:
-    log_df.to_csv(accuracy_file, mode='w', header=True, index=False)
-
-# Plotting all methods on the same graph
-plt.figure(figsize=(15, 10))
-plt.plot(values.index, values, label='Original Data', color='blue', linewidth=2)
-
-for method in filled_df.columns:
-    plt.plot(filled_df.index, filled_df[method], 
-             label=f'{method} (MAPE: {mape_results[method] * 100:.2f}%)' if mape_results[method] is not None else f'{method} (MAPE: N/A)', linestyle='--')
-
-# Add title and labels
-plt.title('Chlorophyll Data Gap Filling Methods')
-plt.xlabel('Date')
-plt.ylabel('Chlorophyll Concentration')
-plt.legend(loc='best')
-plt.xticks(rotation='vertical')
-plt.ylim(0, 1)
-plt.grid()
-
-# Save the plot with formatted gap dates
-plot_filename = f'plots/Chlorophyll_Gap_Filling_{gap_start.strftime("%Y%m%d")}_{gap_end.strftime("%Y%m%d")}.png'
-plt.savefig(plot_filename)
-plt.close()  # Close the plot to free up memory
+    print("Plot not saved as the neural network did not achieve the lowest MAPE.")
