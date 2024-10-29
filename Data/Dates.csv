@@ -1,2 +1,2 @@
-start_date,end_date,gap_start,gap_end,filter
-2012-10-01,2020-06-30,2013-11-18,2013-12-06, false
+start_date,end_date,gap_start,gap_end,filter,primary_data_point
+2012-10-01,2020-06-30,2017-01-02,2017-01-18,False,Est5

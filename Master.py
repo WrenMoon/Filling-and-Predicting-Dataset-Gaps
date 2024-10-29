@@ -19,7 +19,7 @@ os.makedirs('plots', exist_ok=True)
 
 # Counter for plots generated
 plots_generated = 0
-max_plots = 10
+max_plots = 30
 
 # Check if filter is true
 apply_filter = dates_df.loc[0, 'filter'] == 'true'

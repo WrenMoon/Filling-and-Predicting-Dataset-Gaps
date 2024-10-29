@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import numpy as np
 
-# Load data from CSV and select the 'Est5' column
+# Load data from CSV and select the MainEst column
 data = pd.read_csv('Data/Chlor_A data.csv', index_col=0, parse_dates=True)
 dates = pd.read_csv('Data/Dates.csv')
 
@@ -11,11 +11,12 @@ start_date = pd.to_datetime(dates.loc[0, 'start_date'])
 end_date = pd.to_datetime(dates.loc[0, 'end_date'])
 gap_start = pd.to_datetime(dates.loc[0, 'gap_start'])
 gap_end = pd.to_datetime(dates.loc[0, 'gap_end'])
+MainEst = dates.loc[0, 'primary_data_point']
 
 print(start_date, end_date, gap_start, gap_end)
 
 # Select the relevant data
-values = data['Est5'].loc[start_date:end_date]
+values = data[MainEst].loc[start_date:end_date]
 
 # Create a mask for the gap
 mask = (values.index >= gap_start) & (values.index <= gap_end)
