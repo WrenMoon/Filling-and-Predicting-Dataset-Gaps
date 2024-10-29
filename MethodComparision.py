@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import numpy as np
 
-# Load data from CSV and select the 'Est2' column
+# Load data from CSV and select the 'Est5' column
 data = pd.read_csv('Data/Chlor_A data.csv', index_col=0, parse_dates=True)
 dates = pd.read_csv('Data/Dates.csv')
 
@@ -15,12 +15,14 @@ gap_end = pd.to_datetime(dates.loc[0, 'gap_end'])
 print(start_date, end_date, gap_start, gap_end)
 
 # Select the relevant data
-values = data['Est2'].loc[start_date:end_date]
+values = data['Est5'].loc[start_date:end_date]
 
 # Create a mask for the gap
 mask = (values.index >= gap_start) & (values.index <= gap_end)
 gapped_values = values.copy()
 gapped_values[mask] = np.nan
+
+print(mask)
 
 # Initialize a dictionary to hold filled values
 filled_values = {}
@@ -44,12 +46,17 @@ filled_values['Cubic'] = gapped_values.interpolate(method='cubic')
 # Save filled values to a DataFrame
 filled_df = pd.DataFrame(filled_values)
 
-# Load the existing filled DataFrame from CSV (if it exists)
+# Load or create the existing filled DataFrame from CSV
 filled_csv_path = 'Data/Filled_Chlorophyll_Data.csv'
-if os.path.exists(filled_csv_path):
+if os.path.exists(filled_csv_path) and os.path.getsize(filled_csv_path) > 0:
+    # Load the CSV only if it is not empty
     existing_filled_df = pd.read_csv(filled_csv_path, index_col=0, parse_dates=True)
+    
+    # Align indices in case of any discrepancies
+    filled_df = filled_df.reindex(existing_filled_df.index, fill_value=np.nan)
 else:
-    existing_filled_df = pd.DataFrame(index=filled_df.index)  # Create an empty DataFrame with the same index if file doesn't exist
+    # Create an empty DataFrame with the same index as filled_df if file doesn't exist or is empty
+    existing_filled_df = pd.DataFrame(index=filled_df.index)
 
 # Update only the columns that need to be filled
 for column in filled_df.columns:

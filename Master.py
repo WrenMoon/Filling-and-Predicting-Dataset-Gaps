@@ -12,20 +12,23 @@ start_date = pd.to_datetime(dates_df.loc[0, 'start_date'])
 end_date = pd.to_datetime(dates_df.loc[0, 'end_date'])
 
 # Define the gap lengths (7 to 10 days)
-gap_durations = [timedelta(days=x) for x in range(15, 22)]  # Gaps of 7 to 10 days
+gap_durations = [timedelta(days=x) for x in range(15, 20)]  # Gaps of 7 to 10 days
 
 # Create 'plots' directory if it doesn't exist
 os.makedirs('plots', exist_ok=True)
 
-# Counter for plots with the lowest MAPE for the neural network
-valid_plots_generated = 0
+# Counter for plots generated
+plots_generated = 0
 max_plots = 10
+
+# Check if filter is true
+apply_filter = dates_df.loc[0, 'filter'] == 'true'
 
 # Calculate possible gap start offsets
 max_gap_start_offset = (end_date - start_date).days
 
-# Run the scripts for different gaps until 10 valid plots are saved
-while valid_plots_generated < max_plots:
+# Run the scripts for different gaps
+while plots_generated < max_plots:
     # Randomly choose a gap duration
     gap = random.choice(gap_durations)
 
@@ -39,14 +42,19 @@ while valid_plots_generated < max_plots:
     dates_df.loc[0, 'gap_end'] = gap_end.strftime('%Y-%m-%d')
     dates_df.to_csv('Data/Dates.csv', index=False)
 
-    # Run each script
+    # Run MethodComparison and Plotting scripts
     subprocess.run(['python', 'MethodComparision.py'])
-    
-    # Run the plotting script
-    result = subprocess.run(['python', 'Plotting.py'], capture_output=True, text=True)
+    subprocess.run(['python', 'Plotting.py'])
 
-    # Check the output for a success flag indicating a valid plot was saved
-    if "Plot saved" in result.stdout:
-        valid_plots_generated += 1  # Increment the valid plot counter
+    # Increment plot counter if filter is false
+    if not apply_filter:
+        plots_generated += 1
+    else:
+        # Load filled DataFrame to check MAPE after running Plotting.py
+        filled_df = pd.read_csv('Data/Filled_Chlorophyll_Data.csv', index_col=0, parse_dates=True)
+        with open('Data/plot_mape_status.txt', 'r') as file:
+            plot_successful = file.read().strip() == "success"
+        if plot_successful:
+            plots_generated += 1
 
-print("Completed generating 10 plots with the lowest MAPE for the neural network method.")
+print("Completed generating plots for 10 specified gaps.")

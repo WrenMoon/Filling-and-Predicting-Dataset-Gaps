@@ -1,2 +1,2 @@
-start_date,end_date,gap_start,gap_end
-2012-10-01,2020-06-30,2019-12-29,2020-01-15
+start_date,end_date,gap_start,gap_end,filter
+2012-10-01,2020-06-30,2013-11-18,2013-12-06, false
