@@ -64,6 +64,8 @@ accuracy_df['9 Point Prediction (MAPE)'] = mape_results.get('9 Point Prediction'
 accuracy_df['9 Point Prediction (RMSE)'] = rmse_results.get('9 Point Prediction')
 accuracy_df['Linear Interpolation (RMSE)'] = rmse_results.get('Linear Interpolation')
 accuracy_df['Linear Interpolation (MAPE)'] = mape_results.get('Linear Interpolation')
+accuracy_df['Timeless Prediction (RMSE)'] = rmse_results.get('Timeless Prediction')
+accuracy_df['Timeless Prediction (MAPE)'] = mape_results.get('Timeless Prediction')
 
 # Calculate gap length
 gap_length = (gap_end - gap_start).days
@@ -72,10 +74,9 @@ gap_length = (gap_end - gap_start).days
 accuracy_df['gap_length'] = gap_length
 
 # Save the results to a CSV file, appending if the file already exists
-csv_file_path = 'Data/accuracy.csv'
-if os.path.exists(csv_file_path) and os.path.getsize(csv_file_path) > 0:
+if os.path.exists('Data/accuracy.csv') and os.path.getsize('Data/accuracy.csv') > 0:
     # Load the existing data
-    existing_df = pd.read_csv(csv_file_path, index_col=0, parse_dates=True)
+    existing_df = pd.read_csv('Data/accuracy.csv', index_col=0, parse_dates=True)
     # Append new data
     updated_df = pd.concat([existing_df, accuracy_df])
 else:
@@ -83,7 +84,7 @@ else:
     updated_df = accuracy_df
 
 # Save the updated DataFrame to CSV
-updated_df.to_csv(csv_file_path)
+updated_df.to_csv('Data/accuracy.csv')
 
 # Prepare to plot
 
@@ -128,8 +129,8 @@ plt.xticks(rotation='horizontal', fontsize=6)
 plt.ylim(0, 1.75)
 plt.grid()
 
-plot_filename = f'plots/Chlorophyll_Gap_Filling_{gap_start.strftime("%Y%m%d")}_{gap_end.strftime("%Y%m%d")}.png'
-plt.savefig(plot_filename)
-plot_filename = f'plots/Chlorophyll_Gap_Filling_{gap_start.strftime("%Y%m%d")}_{gap_end.strftime("%Y%m%d")}.eps'
-plt.savefig(plot_filename)
+# plot_filename = f'plots/Chlorophyll_Gap_Filling_{gap_start.strftime("%Y%m%d")}_{gap_end.strftime("%Y%m%d")}.png'
+# plt.savefig(plot_filename)
+# plot_filename = f'plots/Chlorophyll_Gap_Filling_{gap_start.strftime("%Y%m%d")}_{gap_end.strftime("%Y%m%d")}.eps'
+# plt.savefig(plot_filename)
 plt.close()

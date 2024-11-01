@@ -11,6 +11,7 @@ from tensorflow.keras import layers
 # Load data
 FilteredCSV = pd.read_csv('Data/Chlor_A data.csv', index_col=0, parse_dates=True)
 FullCSV = pd.read_csv('Data/Chlor_A data.csv', index_col=0, parse_dates=True)
+layer_nodes = pd.read_csv('Data/Nodes.csv')
 dates = pd.read_csv('Data/Dates.csv')
 
 # Extract start and end dates
@@ -20,18 +21,11 @@ gap_start = dates.loc[0, 'gap_start']
 gap_end = dates.loc[0, 'gap_end']
 
 # Define station columns
-# Est_columns = ['Est1', 'Est2', 'Est3', 'Est4', MainEst, 'Est6', 'Est7', 'Est8', 'Est9']
-Est_columns = ['Est2', 'Est5', 'Est8']
+Est_columns = ['Est1', 'Est2', 'Est3', 'Est4', 'Est5', 'Est6', 'Est7', 'Est8', 'Est9']
+# Est_columns = ['Est2', 'Est5', 'Est8']
 
 # Filter data between start_date and end_date
 FilteredCSV = FilteredCSV.loc[start_date:end_date]
-
-# Set values in Est5 to NaN for the gap period
-FilteredCSV.loc[gap_start:gap_end, 'Est5'] = np.nan
-
-# Add a week column
-FilteredCSV['week'] = FilteredCSV.index.isocalendar().week
-FullCSV['week'] = FullCSV.index.isocalendar().week
 
 # Define a function to fill missing values based on nearby points
 def fill_missing(data_row, target='Est5'):
@@ -54,39 +48,30 @@ def fill_missing(data_row, target='Est5'):
     return data_row
 
 # Apply the fill function and drop rows with missing target or too many missing points
-
-if (len(Est_columns) > 3):
+if len(Est_columns) > 3:
     FilledTrainData = FilteredCSV.apply(fill_missing, axis=1).dropna()
 else:
     FilledTrainData = FilteredCSV.dropna()
-# Define features and target for training
-features = FilledTrainData[['week'] + [col for col in Est_columns if col != 'Est5']].astype(float32)
+
+# Define features and target for training, excluding 'day' column
+features = FilledTrainData[[col for col in Est_columns if col != 'Est5']].astype(float32)
 target = FilledTrainData['Est5'].astype(float32)
 X_train = features.values
 y_train = target.values
-
-print((Est_columns))
-# print(features)
 
 # Scale training data
 scaler = StandardScaler().fit(X_train)
 X_train = scaler.transform(X_train)
 
-# Build and train the model
-model = keras.Sequential([
-    layers.Input(shape=(len(Est_columns),)),  # Dynamically set input shape
-    layers.Dense(256, activation='relu', kernel_regularizer='l2'), 
-    layers.Dropout(0.2),
-    layers.Dense(128, activation='relu', kernel_regularizer='l2'),
-    layers.Dropout(0.2),
-    layers.Dense(64, activation='relu', kernel_regularizer='l2'),
-    layers.Dropout(0.2),
-    layers.Dense(32, activation='relu', kernel_regularizer='l2'),
-    layers.Dropout(0.2),
-    layers.Dense(16, activation='relu', kernel_regularizer='l2'),
-    layers.Dense(1)
-])
+model = keras.Sequential()
+model.add(layers.Input(shape=(len(Est_columns)-1,)))  # Dynamically set input shape, excluding Est5
 
+for nodes in layer_nodes.columns:
+    model.add(layers.Dense(nodes, activation='relu', kernel_regularizer='l2'))
+    model.add(layers.Dropout(0.2))
+
+# Add the final output layer with a single node
+model.add(layers.Dense(1))
 model.compile(optimizer='adam', loss='mean_squared_error', metrics=['mean_absolute_percentage_error'])
 model.fit(X_train, y_train, epochs=1000, batch_size=32, validation_split=0.2, verbose=2)
 
@@ -101,7 +86,7 @@ def fill_for_prediction(row, target='Est5'):
     return row
 
 FullCSV[Est_columns] = FullCSV[Est_columns].apply(fill_for_prediction, axis=1)
-X_complete = FullCSV[['week'] + [col for col in Est_columns if col != 'Est5']].astype(float32)
+X_complete = FullCSV[[col for col in Est_columns if col != 'Est5']].astype(float32)
 X_complete = scaler.transform(X_complete)
 
 # Predict all values including where Est5 was originally NaN
@@ -127,7 +112,7 @@ else:
 
 # Save updated predictions to a new CSV file
 filled_df = pd.read_csv('Data/Filled_Chlorophyll_Data.csv', index_col=0, parse_dates=True)
-filled_df['3 Point Prediction'] = FullCSV['PredictedData']
+filled_df['Timeless Prediction'] = FullCSV['PredictedData']
 filled_df.to_csv('Data/Filled_Chlorophyll_Data.csv')
 
 # Print MAPE result
@@ -135,3 +120,27 @@ if mape is not None:
     print(f"MAPE for the predictions: {mape * 100:.2f}%")
 else:
     print("No valid data for MAPE calculation.")
+
+
+
+
+
+
+
+# It is better to use numbers of nodes in layers in deacreasing powers of 2
+    
+# 1. Memory Efficiency
+# Binary Compatibility: Computers work with binary data, and powers of 2 align well with binary storage and memory allocation. This can make data transfer and allocation more efficient in memory, particularly on GPU architectures that are highly optimized for binary computation.
+# Cache Optimization: Powers of 2 can align with memory cache sizes, helping the model access and store data more efficiently, especially in environments with limited memory.
+    
+# 2. Training Stability
+# Balanced Gradient Flow: Gradually decreasing layer sizes can help with the stability of gradient flow, reducing the risk of issues like vanishing gradients in deep networks. By reducing the number of neurons, each layer becomes a form of dimensionality reduction, condensing learned features into more meaningful, abstract representations.
+# Reducing Overfitting: Smaller layers can act as implicit regularization, particularly in later layers, helping the network to focus on key features and avoid overfitting on complex patterns that may not generalize well.
+    
+# 3. Heuristic and Practical Experience
+# Empirical Success: Powers of 2 have shown to work well in practice due to compatibility with both hardware and algorithmic flow. Many libraries, including GPU-based frameworks like CUDA, have optimizations for power-of-2 sizes, making it a practical default choice.
+# Simplicity and Reproducibility: Using powers of 2 helps maintain uniformity across different network architectures, making network design simpler and results more reproducible, especially when experimenting with variations on similar tasks.
+    
+# 4. Hyperparameter Tuning
+# Intuitive Layer Sizing: Reducing each layer’s size by half is a simple approach that often maintains model capacity without overloading it. If every layer is too large, the network may have too much capacity and could overfit or become too slow. Reducing layer sizes gradually gives the network a controlled capacity reduction as it progresses toward the final output.
+# Using powers of 2 isn’t required, and networks can work with arbitrary layer sizes, but this heuristic provides a good balance of performance, memory usage, and efficiency.

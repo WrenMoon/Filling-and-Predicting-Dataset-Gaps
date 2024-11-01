@@ -19,7 +19,7 @@ os.makedirs('plots', exist_ok=True)
 
 # Counter for plots generated
 plots_generated = 0
-max_plots = 1000
+max_plots = 1200
 
 # Check if filter is true
 
