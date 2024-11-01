@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_absolute_percentage_error, mean_squared_error
 from datetime import timedelta
+from matplotlib import rcParams
 
 # Create 'plots' directory if it doesn't exist
 os.makedirs('plots', exist_ok=True)
@@ -89,11 +90,11 @@ updated_df.to_csv(csv_file_path)
 plot_values = values.loc[plot_start:plot_end]
 plot_filled_df = filled_df.loc[gap_start:gap_end]
 
-plt.figure(figsize=(15, 6))
+plt.figure(figsize=(8, 3))
 plt.plot(plot_values.index, plot_values, label='Original Data', color='blue', linewidth=2)
 
 for method in plot_filled_df.columns:
-    if method != '9 Point Prediction' and method != '3 Point Prediction' and method != 'Mean Imputation':
+    if method != '9 Point Prediction' and method != '3 Point Prediction' and method != 'Mean Imputation' and method != 'Cubic' and method != 'Polynomial':
         rmse_str = f'{rmse_results.get(method, "N/A"):.4f}' if rmse_results.get(method) is not None else "N/A"
         plt.plot(
             plot_filled_df.index,
@@ -117,15 +118,18 @@ for method in plot_filled_df.columns:
             plot_filled_df[method],
             label=f'9 Input Model (RMSE: {rmse_str})',
             color='black',
+            linestyle='--',
             linewidth=4
         )
 
-plt.ylabel('Chlorophyll Concentration')
-plt.legend(loc='best')
-plt.xticks(rotation='horizontal')
-plt.ylim(0, 0.3)
+plt.ylabel('Chlorophyll Concentration (mg/m\u00b3)\n', fontsize=7)
+plt.legend(loc='best', prop={'size': 6})
+plt.xticks(rotation='horizontal', fontsize=6)
+plt.ylim(0, 1.75)
 plt.grid()
 
 plot_filename = f'plots/Chlorophyll_Gap_Filling_{gap_start.strftime("%Y%m%d")}_{gap_end.strftime("%Y%m%d")}.png'
+plt.savefig(plot_filename)
+plot_filename = f'plots/Chlorophyll_Gap_Filling_{gap_start.strftime("%Y%m%d")}_{gap_end.strftime("%Y%m%d")}.eps'
 plt.savefig(plot_filename)
 plt.close()
