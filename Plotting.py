@@ -34,6 +34,8 @@ mask = (values.index >= gap_start) & (values.index <= gap_end)
 mape_results = {}
 rmse_results = {}
 
+plotsucces = True
+
 # Calculate MAPE and RMSE for each method regardless of filter
 for method in filled_df.columns:
     # Ensure y_true and y_pred are aligned by reindexing
@@ -43,7 +45,13 @@ for method in filled_df.columns:
     # Drop NaNs in both series to avoid mismatches
     y_true, y_pred = y_true.dropna(), y_pred.dropna()
 
-    if len(y_true) > 0 and len(y_pred) > 0:
+    if len(y_true) != len(y_pred):
+        print("Plot Failed")
+        print(gap_start, gap_end)
+        plotsucces = False
+
+
+    if len(y_true) > 0 and len(y_pred) > 0 and len(y_true) == len(y_pred):
         mape = mean_absolute_percentage_error(y_true, y_pred)
         rmse = mean_squared_error(y_true, y_pred, squared=False)
         mape_results[method] = mape
@@ -58,14 +66,12 @@ for method in filled_df.columns:
 accuracy_df = pd.DataFrame(index=[gap_start])
 
 # Add MAPE and RMSE for 3 Point Prediction and 9 Point Prediction
-accuracy_df['3 Point Prediction (MAPE)'] = mape_results.get('3 Point Prediction')
-accuracy_df['3 Point Prediction (RMSE)'] = rmse_results.get('3 Point Prediction')
+# accuracy_df['3 Point Prediction (MAPE)'] = mape_results.get('3 Point Prediction')
+# accuracy_df['3 Point Prediction (RMSE)'] = rmse_results.get('3 Point Prediction')
 accuracy_df['9 Point Prediction (MAPE)'] = mape_results.get('9 Point Prediction')
 accuracy_df['9 Point Prediction (RMSE)'] = rmse_results.get('9 Point Prediction')
-accuracy_df['Linear Interpolation (RMSE)'] = rmse_results.get('Linear Interpolation')
-accuracy_df['Linear Interpolation (MAPE)'] = mape_results.get('Linear Interpolation')
-accuracy_df['Timeless Prediction (RMSE)'] = rmse_results.get('Timeless Prediction')
-accuracy_df['Timeless Prediction (MAPE)'] = mape_results.get('Timeless Prediction')
+# accuracy_df['Linear Interpolation (RMSE)'] = rmse_results.get('Linear Interpolation')
+# accuracy_df['Linear Interpolation (MAPE)'] = mape_results.get('Linear Interpolation')
 
 # Calculate gap length
 gap_length = (gap_end - gap_start).days
@@ -84,53 +90,54 @@ else:
     updated_df = accuracy_df
 
 # Save the updated DataFrame to CSV
-updated_df.to_csv('Data/accuracy.csv')
+if plotsucces:
+    updated_df.to_csv('Data/accuracy.csv')
 
 # Prepare to plot
 
 plot_values = values.loc[plot_start:plot_end]
 plot_filled_df = filled_df.loc[gap_start:gap_end]
 
-plt.figure(figsize=(8, 3))
-plt.plot(plot_values.index, plot_values, label='Original Data', color='blue', linewidth=2)
+# plt.figure(figsize=(8, 3))
+# plt.plot(plot_values.index, plot_values, label='Original Data', color='blue', linewidth=2)
 
-for method in plot_filled_df.columns:
-    if method != '9 Point Prediction' and method != '3 Point Prediction' and method != 'Mean Imputation' and method != 'Cubic' and method != 'Polynomial':
-        rmse_str = f'{rmse_results.get(method, "N/A"):.4f}' if rmse_results.get(method) is not None else "N/A"
-        plt.plot(
-            plot_filled_df.index,
-            plot_filled_df[method],
-            label=f'{method} (RMSE: {rmse_str})',
-            linestyle='--'
-        )
-    elif method == '3 Point Prediction':
-        rmse_str = f'{rmse_results.get(method, "N/A"):.4f}' if rmse_results.get(method) is not None else "N/A"
-        plt.plot(
-            plot_filled_df.index,
-            plot_filled_df[method],
-            label=f'3 Input Model (RMSE: {rmse_str})',
-            linestyle='--'
-        )
+# for method in plot_filled_df.columns:
+#     if method != '9 Point Prediction' and method != '3 Point Prediction' and method != 'Mean Imputation' and method != 'Cubic' and method != 'Polynomial':
+#         rmse_str = f'{rmse_results.get(method, "N/A"):.4f}' if rmse_results.get(method) is not None else "N/A"
+#         plt.plot(
+#             plot_filled_df.index,
+#             plot_filled_df[method],
+#             label=f'{method} (RMSE: {rmse_str})',
+#             linestyle='--'
+#         )
+#     elif method == '3 Point Prediction':
+#         rmse_str = f'{rmse_results.get(method, "N/A"):.4f}' if rmse_results.get(method) is not None else "N/A"
+#         plt.plot(
+#             plot_filled_df.index,
+#             plot_filled_df[method],
+#             label=f'3 Input Model (RMSE: {rmse_str})',
+#             linestyle='--'
+#         )
 
-    elif method == '9 Point Prediction':
-        rmse_str = f'{rmse_results.get(method, "N/A"):.4f}' if rmse_results.get(method) is not None else "N/A"
-        plt.plot(
-            plot_filled_df.index,
-            plot_filled_df[method],
-            label=f'9 Input Model (RMSE: {rmse_str})',
-            color='black',
-            linestyle='--',
-            linewidth=4
-        )
+#     elif method == '9 Point Prediction':
+#         rmse_str = f'{rmse_results.get(method, "N/A"):.4f}' if rmse_results.get(method) is not None else "N/A"
+#         plt.plot(
+#             plot_filled_df.index,
+#             plot_filled_df[method],
+#             label=f'9 Input Model (RMSE: {rmse_str})',
+#             color='black',
+#             linestyle='--',
+#             linewidth=4
+#         )
 
-plt.ylabel('Chlorophyll Concentration (mg/m\u00b3)\n', fontsize=7)
-plt.legend(loc='best', prop={'size': 6})
-plt.xticks(rotation='horizontal', fontsize=6)
-plt.ylim(0, 1.75)
-plt.grid()
+# plt.ylabel('Chlorophyll Concentration (mg/m\u00b3)\n', fontsize=7)
+# plt.legend(loc='best', prop={'size': 6})
+# plt.xticks(rotation='horizontal', fontsize=6)
+# plt.ylim(0, 1.75)
+# plt.grid()
 
 # plot_filename = f'plots/Chlorophyll_Gap_Filling_{gap_start.strftime("%Y%m%d")}_{gap_end.strftime("%Y%m%d")}.png'
 # plt.savefig(plot_filename)
 # plot_filename = f'plots/Chlorophyll_Gap_Filling_{gap_start.strftime("%Y%m%d")}_{gap_end.strftime("%Y%m%d")}.eps'
 # plt.savefig(plot_filename)
-plt.close()
+# plt.close()

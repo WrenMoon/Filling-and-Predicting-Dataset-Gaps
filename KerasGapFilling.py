@@ -27,6 +27,11 @@ Est_columns = ['Est1', 'Est2', 'Est3', 'Est4', 'Est5', 'Est6', 'Est7', 'Est8', '
 # Filter data between start_date and end_date
 FilteredCSV = FilteredCSV.loc[start_date:end_date]
 
+# Add a week column
+FilteredCSV['week'] = FilteredCSV.index.isocalendar().week
+FullCSV['week'] = FullCSV.index.isocalendar().week
+
+# print(FilteredCSV)
 # Define a function to fill missing values based on nearby points
 def fill_missing(data_row, target='Est5'):
     if pd.isna(data_row[target]):
@@ -48,13 +53,13 @@ def fill_missing(data_row, target='Est5'):
     return data_row
 
 # Apply the fill function and drop rows with missing target or too many missing points
-if len(Est_columns) > 3:
+
+if (len(Est_columns) > 3):
     FilledTrainData = FilteredCSV.apply(fill_missing, axis=1).dropna()
 else:
     FilledTrainData = FilteredCSV.dropna()
-
-# Define features and target for training, excluding 'day' column
-features = FilledTrainData[[col for col in Est_columns if col != 'Est5']].astype(float32)
+# Define features and target for training
+features = FilledTrainData[['week'] + [col for col in Est_columns if col != 'Est5']].astype(float32)
 target = FilledTrainData['Est5'].astype(float32)
 X_train = features.values
 y_train = target.values
@@ -64,7 +69,7 @@ scaler = StandardScaler().fit(X_train)
 X_train = scaler.transform(X_train)
 
 model = keras.Sequential()
-model.add(layers.Input(shape=(len(Est_columns)-1,)))  # Dynamically set input shape, excluding Est5
+model.add(layers.Input(shape=(len(Est_columns),)))  # Dynamically set input shape
 
 for nodes in layer_nodes.columns:
     model.add(layers.Dense(nodes, activation='relu', kernel_regularizer='l2'))
@@ -73,7 +78,7 @@ for nodes in layer_nodes.columns:
 # Add the final output layer with a single node
 model.add(layers.Dense(1))
 model.compile(optimizer='adam', loss='mean_squared_error', metrics=['mean_absolute_percentage_error'])
-model.fit(X_train, y_train, epochs=1000, batch_size=32, validation_split=0.2, verbose=2)
+model.fit(X_train, y_train, epochs=500, batch_size=32, validation_split=0.2, verbose=1)
 
 # Prepare data for predictions with missing handling
 def fill_for_prediction(row, target='Est5'):
@@ -86,7 +91,7 @@ def fill_for_prediction(row, target='Est5'):
     return row
 
 FullCSV[Est_columns] = FullCSV[Est_columns].apply(fill_for_prediction, axis=1)
-X_complete = FullCSV[[col for col in Est_columns if col != 'Est5']].astype(float32)
+X_complete = FullCSV[['week'] + [col for col in Est_columns if col != 'Est5']].astype(float32)
 X_complete = scaler.transform(X_complete)
 
 # Predict all values including where Est5 was originally NaN
@@ -112,7 +117,7 @@ else:
 
 # Save updated predictions to a new CSV file
 filled_df = pd.read_csv('Data/Filled_Chlorophyll_Data.csv', index_col=0, parse_dates=True)
-filled_df['Timeless Prediction'] = FullCSV['PredictedData']
+filled_df['9 Point Prediction'] = FullCSV['PredictedData']
 filled_df.to_csv('Data/Filled_Chlorophyll_Data.csv')
 
 # Print MAPE result
@@ -120,7 +125,6 @@ if mape is not None:
     print(f"MAPE for the predictions: {mape * 100:.2f}%")
 else:
     print("No valid data for MAPE calculation.")
-
 
 
 
