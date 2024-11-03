@@ -1,24 +1,76 @@
 
 
 Checking configuration: Config_8_16_32
-      Plots Generated: 5 / 5
+      Plots Generated: 250 / 250
 
 
 Checking configuration: Config_16_32_64
-      Plots Generated: 5 / 5
+      Plots Generated: 250 / 250
 
 
 Checking configuration: Config_32_64_128
-      Plots Generated: 5 / 5
+      Plots Generated: 250 / 250
 
 
 Checking configuration: Config_4_8_16_32
-      Plots Generated: 5 / 5
+      Plots Generated: 250 / 250
 
 
 Checking configuration: Config_8_16_32_64
-      Plots Generated: 5 / 5
+      Plots Generated: 250 / 250
 
 
 Checking configuration: Config_16_32_64_128
-      Plots Generated: 0 / 5
+      Plots Generated: 250 / 250
+
+
+Checking configuration: Config_32_64_128_256
+      Plots Generated: 250 / 250
+
+
+Checking configuration: Config_4_8_16_32_64
+      Plots Generated: 250 / 250
+
+
+Checking configuration: Config_8_16_32_64_128
+      Plots Generated: 250 / 250
+
+
+Checking configuration: Config_16_32_64_128_256
+      Plots Generated: 250 / 250
+
+
+Checking configuration: Config_32_64_128_256_512
+      Plots Generated: 250 / 250
+
+
+Checking configuration: Config_4_8_16_32_64_128
+      Plots Generated: 250 / 250
+
+
+Checking configuration: Config_8_16_32_64_128_256
+      Plots Generated: 250 / 250
+
+
+Checking configuration: Config_16_32_64_128_256_512
+      Plots Generated: 250 / 250
+
+
+Checking configuration: Config_32_64_128_256_512_1024
+      Plots Generated: 250 / 250
+
+
+Checking configuration: Config_4_8_16_32_64_128_256
+      Plots Generated: 250 / 250
+
+
+Checking configuration: Config_8_16_32_64_128_256_512
+      Plots Generated: 250 / 250
+
+
+Checking configuration: Config_16_32_64_128_256_512_1024
+      Plots Generated: 250 / 250
+
+
+Checking configuration: Config_32_64_128_256_512_1024_2048
+      Plots Generated: 250 / 250
