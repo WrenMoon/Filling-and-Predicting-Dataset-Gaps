@@ -1,1 +1,1 @@
-An Artificial Neural Network Model for filling gaps in chlorophyll data across time using surrounding data points. Code written, tests, compares and analyses different versions of the ANN along with other traditional gap filling methods.
+Branch which compares different neural structures, input patterns, etc of the Neural Network
