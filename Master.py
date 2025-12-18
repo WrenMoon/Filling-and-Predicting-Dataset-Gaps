@@ -19,9 +19,7 @@ os.makedirs('plots', exist_ok=True)
 
 # Counter for plots generated
 plots_generated = 0
-max_plots = 1000
-
-# Check if filter is true
+max_plots = 10
 
 # Calculate possible gap start offsets
 max_gap_start_offset = (end_date - start_date).days
@@ -42,11 +40,7 @@ while plots_generated < max_plots:
     dates_df.to_csv('Data/Dates.csv', index=False)
 
     # Run MethodComparison and Plotting scripts
-    subprocess.run(['python', 'MethodComparision.py'])
+    # subprocess.run(['python', 'MethodComparision.py'])
     subprocess.run(['python', 'Plotting.py'])
 
     plots_generated += 1
-   
-
-print("Completed generating plots for 10 specified gaps.")
-subprocess.run(['python', 'Accuracy_Plotting'])
