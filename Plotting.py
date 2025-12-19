@@ -42,8 +42,6 @@ methods = {}
 # Linear Interpolation
 methods['Linear Interpolation'] = values_with_gap.interpolate(method='linear')
 
-# Cubic Spline Interpolation
-methods['Cubic Spline'] = values_with_gap.interpolate(method='cubic')
 
 # Polynomial Interpolation (degree 2)
 try:
@@ -188,7 +186,7 @@ plot_values = values.loc[plot_start:plot_end]
 plot_methods = {}
 
 # Only plot selected methods for clarity
-methods_to_plot = ['Linear Interpolation', 'Cubic Spline', '3 Point Prediction', '9 Point Prediction']
+methods_to_plot = ['Linear Interpolation', 'Cubic', '3 Point Prediction', '9 Point Prediction']
 
 for method_name in methods_to_plot:
     if method_name in methods:

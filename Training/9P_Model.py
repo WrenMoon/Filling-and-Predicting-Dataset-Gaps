@@ -1,16 +1,25 @@
 import os
 import pickle
+import random
 
 import numpy as np
 import pandas as pd
 from numpy import float32
 from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import (
+    mean_absolute_error,
+    root_mean_squared_error,
+    mean_absolute_percentage_error,
+)
+import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 
 # ------------------------------------------------------------------
 # Configuration
 # ------------------------------------------------------------------
+SEED = 42
+
 DATA_PATH = 'Data/Chlor_A data.csv'
 DATES_PATH = 'Data/Dates.csv'
 MODELS_DIR = 'Training/models'
@@ -23,9 +32,18 @@ SCALER_PATH = os.path.join(MODELS_DIR, 'gapfill_9point_scaler.pkl')
 EST_COLUMNS_9 = ['Est1', 'Est2', 'Est3', 'Est4', 'Est5', 'Est6', 'Est7', 'Est8', 'Est9']
 
 # ------------------------------------------------------------------
+# Reproducibility
+# ------------------------------------------------------------------
+np.random.seed(SEED)
+random.seed(SEED)
+tf.random.set_seed(SEED)
+os.environ['PYTHONHASHSEED'] = str(SEED)
+
+# ------------------------------------------------------------------
 # Load data
 # ------------------------------------------------------------------
 data = pd.read_csv(DATA_PATH, index_col=0, parse_dates=True)
+data = data.sort_index()
 dates = pd.read_csv(DATES_PATH)
 
 start_date = dates.loc[0, 'start_date']
@@ -34,100 +52,157 @@ end_date = dates.loc[0, 'end_date']
 # Restrict to training window
 train_df = data.loc[start_date:end_date].copy()
 
-# Add week-of-year feature
+print(f"Date range: {start_date} to {end_date}")
+print(f"Rows in train_df before preprocessing: {len(train_df)}")
+
+# ------------------------------------------------------------------
+# Temporal features
+# ------------------------------------------------------------------
 train_df['week'] = train_df.index.isocalendar().week.astype('int32')
+train_df['dayofyear'] = train_df.index.dayofyear.astype('int32')
+train_df['sin_doy'] = np.sin(2 * np.pi * train_df['dayofyear'] / 365.25)
+train_df['cos_doy'] = np.cos(2 * np.pi * train_df['dayofyear'] / 365.25)
+train_df['month'] = train_df.index.month.astype('int32')
 
 # ------------------------------------------------------------------
-# Helper to fill missing inputs (except target) for training
+# Robust missing handling for 9‑station inputs
 # ------------------------------------------------------------------
-def fill_missing(row, target='Est5', est_columns=None):
-    """
-    If target is NaN -> discard row.
-    Otherwise, require at least half of the surrounding stations to be present.
-    Fill missing station values with mean of available stations.
-    """
-    if est_columns is None:
-        est_columns = EST_COLUMNS_9
+stations = train_df[EST_COLUMNS_9].copy()
 
-    if pd.isna(row[target]):
-        return None  # drop from training
+# Require target Est5 to be present
+mask_target_present = stations['Est5'].notna()
+stations = stations[mask_target_present]
 
-    surrounding = row[est_columns].drop(labels=[target])
-    available_count = surrounding.notna().sum()
+# Require at least half of non‑target stations to be present
+neighbors = stations.drop(columns=['Est5'])
+available_counts = neighbors.notna().sum(axis=1)
 
-    # Require at least half of non-target stations to be present
-    if available_count < len(est_columns) / 2:
-        return None
+min_required = int(np.ceil((len(EST_COLUMNS_9) - 1) / 2.0))  # half of 8 neighbors
+enough_neighbors = available_counts >= min_required
+stations = stations[enough_neighbors]
 
-    # Replace missing values among surrounding stations by their mean
-    mean_val = surrounding.dropna().mean()
-    for col in surrounding.index:
-        if pd.isna(row[col]):
-            row[col] = mean_val
+# Impute missing neighbors by row-wise mean of available neighbors
+neighbors = stations.drop(columns=['Est5'])
+row_means = neighbors.mean(axis=1, skipna=True)
 
-    return row
+for col in neighbors.columns:
+    missing_mask = stations[col].isna()
+    stations.loc[missing_mask, col] = row_means[missing_mask]
 
-# Apply fill_missing row-wise only to relevant columns + week
-subset_cols = EST_COLUMNS_9 + ['week']
-filled_rows = train_df[subset_cols].apply(
-    lambda r: fill_missing(r, target='Est5', est_columns=EST_COLUMNS_9),
-    axis=1
+# Join back time features
+filled_train_df = stations.join(
+    train_df[['week', 'month', 'sin_doy', 'cos_doy']], how='left'
 )
 
-# Drop rows where fill_missing returned None
-filled_train_df = filled_rows.dropna()
+print(f"Rows in filled_train_df after missing handling: {len(filled_train_df)}")
 
 # ------------------------------------------------------------------
-# Build training dataset
+# Features and target
 # ------------------------------------------------------------------
-feature_cols = ['week'] + [col for col in EST_COLUMNS_9 if col != 'Est5']
-X_train = filled_train_df[feature_cols].astype(float32).values
-y_train = filled_train_df['Est5'].astype(float32).values
+feature_cols = ['week', 'month', 'sin_doy', 'cos_doy'] + [col for col in EST_COLUMNS_9 if col != 'Est5']
 
-print(f"Training 9‑point model on {X_train.shape[0]} samples, {X_train.shape[1]} features.")
+X = filled_train_df[feature_cols].astype(float32).values
+y = filled_train_df['Est5'].astype(float32).values
+
+print(f"Training 9‑point model on {X.shape[0]} samples, {X.shape[1]} features.")
 
 # ------------------------------------------------------------------
 # Scale features
 # ------------------------------------------------------------------
-scaler = StandardScaler().fit(X_train)
-X_train_scaled = scaler.transform(X_train)
+scaler = StandardScaler().fit(X)
+X_scaled = scaler.transform(X)
 
 # ------------------------------------------------------------------
-# Define model
+# Time‑aware train/validation split (no shuffling)
 # ------------------------------------------------------------------
-input_dim = X_train_scaled.shape[1]
+n_samples = X_scaled.shape[0]
+if n_samples < 20:
+    raise ValueError("Not enough samples to train reliably. Check date range.")
+
+split_idx = int(n_samples * 0.8)
+X_train, X_val = X_scaled[:split_idx], X_scaled[split_idx:]
+y_train, y_val = y[:split_idx], y[split_idx:]
+
+print(f"Train samples: {X_train.shape[0]}, Val samples: {X_val.shape[0]}")
+
+# ------------------------------------------------------------------
+# Define optimized model (right-sized for ~2400 samples, 12 features)
+# ------------------------------------------------------------------
+input_dim = X_train.shape[1]
 
 model = keras.Sequential([
     layers.Input(shape=(input_dim,)),
-    layers.Dense(256, activation='relu', kernel_regularizer='l2'),
+    layers.Dense(96, activation='relu', kernel_regularizer=keras.regularizers.l2(0.001)),
     layers.Dropout(0.2),
-    layers.Dense(128, activation='relu', kernel_regularizer='l2'),
+    layers.Dense(48, activation='relu', kernel_regularizer=keras.regularizers.l2(0.001)),
     layers.Dropout(0.2),
-    layers.Dense(64, activation='relu', kernel_regularizer='l2'),
-    layers.Dropout(0.2),
-    layers.Dense(32, activation='relu', kernel_regularizer='l2'),
-    layers.Dropout(0.2),
-    layers.Dense(16, activation='relu', kernel_regularizer='l2'),
+    layers.Dense(24, activation='relu', kernel_regularizer=keras.regularizers.l2(0.001)),
+    layers.Dropout(0.15),
+    layers.Dense(12, activation='relu', kernel_regularizer=keras.regularizers.l2(0.001)),
     layers.Dense(1)
-])
+], name='9point_gapfill')
 
 model.compile(
-    optimizer='adam',
-    loss='mean_squared_error',
-    metrics=['mean_absolute_percentage_error']
+    optimizer=keras.optimizers.Adam(learning_rate=1e-3),
+    loss=keras.losses.Huber(delta=0.5),
+    metrics=[
+        keras.metrics.MeanAbsoluteError(name='mae'),
+        keras.metrics.MeanAbsolutePercentageError(name='mape'),
+        keras.metrics.RootMeanSquaredError(name='rmse'),
+    ]
 )
+
+model.summary()
+
+# ------------------------------------------------------------------
+# Callbacks
+# ------------------------------------------------------------------
+callbacks = [
+    keras.callbacks.EarlyStopping(
+        monitor='val_loss',
+        patience=40,
+        restore_best_weights=True,
+        verbose=1
+    ),
+    keras.callbacks.ReduceLROnPlateau(
+        monitor='val_loss',
+        factor=0.5,
+        patience=15,
+        min_lr=1e-6,
+        verbose=1
+    )
+]
 
 # ------------------------------------------------------------------
 # Train model
 # ------------------------------------------------------------------
-model.fit(
-    X_train_scaled,
+history = model.fit(
+    X_train,
     y_train,
-    epochs=1000,
+    epochs=300,
     batch_size=32,
-    validation_split=0.2,
+    validation_data=(X_val, y_val),
+    shuffle=False,
+    callbacks=callbacks,
     verbose=2
 )
+
+# ------------------------------------------------------------------
+# Evaluate on validation set
+# ------------------------------------------------------------------
+y_val_pred = model.predict(X_val, verbose=0).flatten()
+
+val_mae = mean_absolute_error(y_val, y_val_pred)
+val_rmse = root_mean_squared_error(y_val, y_val_pred)
+val_mape = mean_absolute_percentage_error(y_val, y_val_pred)
+
+print("\n" + "="*60)
+print("VALIDATION PERFORMANCE (9‑point model)")
+print("="*60)
+print(f"  MAE  = {val_mae:.4f}")
+print(f"  RMSE = {val_rmse:.4f}")
+print(f"  MAPE = {val_mape * 100:.2f}%")
+print("="*60)
 
 # ------------------------------------------------------------------
 # Save model and scaler
@@ -136,5 +211,5 @@ model.save(MODEL_PATH)
 with open(SCALER_PATH, 'wb') as f:
     pickle.dump(scaler, f)
 
-print(f"Saved 9‑point model to: {MODEL_PATH}")
+print(f"\nSaved 9‑point model to:   {MODEL_PATH}")
 print(f"Saved 9‑point scaler to: {SCALER_PATH}")

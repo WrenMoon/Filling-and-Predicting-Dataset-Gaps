@@ -39,8 +39,6 @@ methods = {}
 # Linear Interpolation
 methods['Linear Interpolation'] = values_with_gap.interpolate(method='linear')
 
-# Cubic Spline Interpolation
-methods['Cubic Spline'] = values_with_gap.interpolate(method='cubic')
 
 # Polynomial Interpolation (degree 2)
 try:

@@ -19,7 +19,7 @@ os.makedirs('plots', exist_ok=True)
 
 # Counter for plots generated
 plots_generated = 0
-max_plots = 10
+max_plots = 200
 
 # Calculate possible gap start offsets
 max_gap_start_offset = (end_date - start_date).days
