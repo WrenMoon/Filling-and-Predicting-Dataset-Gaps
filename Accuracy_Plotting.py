@@ -22,9 +22,27 @@ for col in all_columns:
 
 # Remove 'gap_length' if it somehow got in there
 methods.discard('gap_length')
-methods = sorted(list(methods))  # Sort for consistent ordering
 
-print(f"Found methods: {methods}")
+# ------------------------------------------------------------------
+# Define custom order for methods
+# ------------------------------------------------------------------
+desired_order = [
+    '9 Point Prediction',
+    '3 Point Prediction',
+    'Linear Interpolation',
+    'Mean Imputation',
+    'Polynomial',
+    'Cubic Spline'
+]
+
+# Filter to only include methods that exist in the data
+methods = [m for m in desired_order if m in methods]
+
+# Add any remaining methods not in desired_order (in case there are extras)
+remaining = [m for m in sorted(methods) if m not in desired_order]
+methods.extend(remaining)
+
+print(f"Found methods (in order): {methods}")
 
 # ------------------------------------------------------------------
 # Group by gap length and calculate mean for both MAPE and RMSE
@@ -53,9 +71,28 @@ print(f"Gap lengths: {averaged_data['gap_length'].tolist()}")
 # ------------------------------------------------------------------
 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
 
-# Define colors for each method (cycle through if more methods than colors)
-colors = ['magenta', 'cyan', 'red', 'green', 'blue', 'orange', 'purple', 'brown', 'pink', 'gray']
-method_colors = {method: colors[i % len(colors)] for i, method in enumerate(methods)}
+# Define colors for each method (with custom mapping for key methods)
+color_map = {
+    '9 Point Prediction': 'red',
+    '3 Point Prediction': 'cyan',
+    'Linear Interpolation': 'magenta',
+    'Mean Imputation': 'green',
+    'Polynomial': 'blue',
+    'Cubic Spline': 'orange',
+    'Cubic': 'orange'  # in case it's named 'Cubic' instead of 'Cubic Spline'
+}
+
+# Fallback colors for any additional methods
+fallback_colors = ['purple', 'brown', 'pink', 'gray', 'olive', 'navy']
+method_colors = {}
+fallback_idx = 0
+
+for method in methods:
+    if method in color_map:
+        method_colors[method] = color_map[method]
+    else:
+        method_colors[method] = fallback_colors[fallback_idx % len(fallback_colors)]
+        fallback_idx += 1
 
 bar_width = 0.8 / len(methods)  # Adjust bar width based on number of methods
 x = np.arange(len(averaged_data))
