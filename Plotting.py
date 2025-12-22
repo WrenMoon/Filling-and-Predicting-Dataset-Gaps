@@ -146,39 +146,6 @@ if best_method not in ['3 Point Prediction', '9 Point Prediction']:
     print(f"Skipping gap: best method is '{best_method}', not a neural network.")
     raise SystemExit(3)
 
-# If we reach here, one of the neural networks is best on this gap.
-# Continue with accuracy_df creation, saving to CSV, and plotting.
-
-# ------------------------------------------------------------------
-# Create a DataFrame to store accuracy results for ALL methods
-# ------------------------------------------------------------------
-accuracy_df = pd.DataFrame(index=[gap_start])
-
-# Add MAPE and RMSE for all methods
-for method_name in methods.keys():
-    accuracy_df[f'{method_name} (MAPE)'] = mape_results.get(method_name)
-    accuracy_df[f'{method_name} (RMSE)'] = rmse_results.get(method_name)
-
-# Calculate gap length
-gap_length = (gap_end - gap_start).days
-
-# Add gap_length to the DataFrame
-accuracy_df['gap_length'] = gap_length
-
-# Save the results to a CSV file, appending if the file already exists
-csv_file_path = 'Data/accuracy.csv'
-if os.path.exists(csv_file_path) and os.path.getsize(csv_file_path) > 0:
-    # Load the existing data
-    existing_df = pd.read_csv(csv_file_path, index_col=0, parse_dates=True)
-    # Append new data
-    updated_df = pd.concat([existing_df, accuracy_df])
-else:
-    # Create a new file if it doesn't exist or is empty
-    updated_df = accuracy_df
-
-# Save the updated DataFrame to CSV
-updated_df.to_csv(csv_file_path)
-
 # ------------------------------------------------------------------
 # Prepare to plot (only selected methods for visual clarity)
 # ------------------------------------------------------------------
@@ -191,6 +158,9 @@ methods_to_plot = ['Linear Interpolation', 'Cubic', '3 Point Prediction', '9 Poi
 for method_name in methods_to_plot:
     if method_name in methods:
         plot_methods[method_name] = methods[method_name].loc[gap_start:gap_end]
+
+plt.rcParams['figure.dpi'] = 300
+plt.rcParams['savefig.dpi'] = 300
 
 plt.figure(figsize=(8, 3))
 plt.plot(plot_values.index, plot_values, label='Original Data', color='blue', linewidth=2)
