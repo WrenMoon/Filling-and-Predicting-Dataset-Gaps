@@ -28,6 +28,10 @@ end_date = pd.to_datetime(dates_df.loc[0, 'end_date'])
 original_data = pd.read_csv(DATA_PATH, index_col=0, parse_dates=True)
 filled_df = pd.read_csv(FILLED_PATH, index_col=0, parse_dates=True)
 
+# Identify station columns for spatial averaging
+EST_COLUMNS = [c for c in original_data.columns if c.startswith('Est')]
+NEIGHBOR_COLS = [c for c in EST_COLUMNS if c != 'Est5']
+
 # Calculate maximum offset
 max_gap_start_offset = (end_date - start_date).days - max(GAP_DURATIONS).days
 
@@ -79,14 +83,14 @@ while successful_runs < MAX_RUNS:
     values_with_gap[mask] = np.nan
     
     # ------------------------------------------------------------------
-    # Apply traditional interpolation methods
+    # Apply traditional + spatial interpolation methods
     # ------------------------------------------------------------------
     methods = {}
     
-    # Linear Interpolation
+    # 1) Temporal Linear Interpolation (time series of Est5 only)
     methods['Linear Interpolation'] = values_with_gap.interpolate(method='linear')
     
-    # Polynomial Interpolation (degree 2)
+    # 2) Polynomial Interpolation (degree 2)
     try:
         valid_indices = values_with_gap.dropna().index
         valid_values = values_with_gap.dropna().values
@@ -103,20 +107,38 @@ while successful_runs < MAX_RUNS:
             )
         else:
             methods['Polynomial'] = values_with_gap.copy()
-    except:
+    except Exception:
         methods['Polynomial'] = values_with_gap.copy()
     
-    # Cubic Interpolation
+    # 3) Cubic Interpolation
     try:
         methods['Cubic'] = values_with_gap.interpolate(method='cubic')
-    except:
+    except Exception:
         methods['Cubic'] = values_with_gap.copy()
     
-    # Mean Imputation
+    # 4) Mean Imputation (temporal mean of Est5)
     mean_value = values_with_gap.mean()
     methods['Mean Imputation'] = values_with_gap.fillna(mean_value)
     
-    # Add neural network predictions
+    # 5) Spatial Linear Interpolation (spatial mean of surrounding stations)
+    #
+    # For each date in the gap, take the mean of all available neighboring
+    # stations (Est1–Est9 except Est5) for that date, and use that as the
+    # estimate of Est5. Outside the gap we keep the original Est5 values.
+    try:
+        # Neighbor values for all dates in the gap
+        neighbor_vals = original_data.loc[gap_index, NEIGHBOR_COLS]
+        spatial_mean = neighbor_vals.mean(axis=1, skipna=True)  # row-wise mean
+        
+        spatial_interp = values_with_gap.copy()
+        spatial_interp.loc[gap_index] = spatial_mean
+        
+        methods['Spatial Linear Interpolation'] = spatial_interp
+    except Exception:
+        # If something goes wrong, fall back to just leaving NaNs in the gap
+        methods['Spatial Linear Interpolation'] = values_with_gap.copy()
+    
+    # 6) Add neural network predictions
     if '3 Point Prediction' in filled_df.columns:
         methods['3 Point Prediction'] = filled_df['3 Point Prediction']
     if '9 Point Prediction' in filled_df.columns:
@@ -186,17 +208,25 @@ while successful_runs < MAX_RUNS:
     successful_runs += 1
     
     # Determine best method for logging
-    valid_rmse = {k.replace(' (RMSE)', ''): v for k, v in results.items() 
-                  if k.endswith('(RMSE)') and v is not None}
+    valid_rmse = {
+        k.replace(' (RMSE)', ''): v
+        for k, v in results.items()
+        if k.endswith('(RMSE)') and v is not None
+    }
     
     if valid_rmse:
         best_method = min(valid_rmse, key=valid_rmse.get)
         best_rmse = valid_rmse[best_method]
-        print(f"[{successful_runs}/{MAX_RUNS}] ✓ Gap {gap_start_adjusted.date()}–{gap_end_adjusted.date()}: "
-              f"Best = {best_method} (RMSE: {best_rmse:.4f}), Valid methods: {methods_with_valid_data}/{len(methods)}")
+        print(
+            f"[{successful_runs}/{MAX_RUNS}] ✓ Gap {gap_start_adjusted.date()}–{gap_end_adjusted.date()}: "
+            f"Best = {best_method} (RMSE: {best_rmse:.4f}), "
+            f"Valid methods: {methods_with_valid_data}/{len(methods)}"
+        )
     else:
-        print(f"[{successful_runs}/{MAX_RUNS}] ✓ Gap {gap_start_adjusted.date()}–{gap_end_adjusted.date()}: "
-              f"Recorded (no valid RMSE values)")
+        print(
+            f"[{successful_runs}/{MAX_RUNS}] ✓ Gap {gap_start_adjusted.date()}–{gap_end_adjusted.date()}: "
+            f"Recorded (no valid RMSE values)"
+        )
     
     # Save to CSV every 100 runs (reduces I/O overhead)
     if successful_runs % 100 == 0:

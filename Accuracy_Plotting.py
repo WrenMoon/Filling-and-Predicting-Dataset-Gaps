@@ -3,25 +3,44 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
+# ------------------------------------------------------------------
+# CONFIGURATION: Choose which methods to plot
+# ------------------------------------------------------------------
+# Set to None to plot ALL methods found in the data
+# Or provide a list of method names you want to include
+# METHODS_TO_PLOT = None  # Plot all methods
+
+# Example: Only plot specific methods
+METHODS_TO_PLOT = [
+    '9 Point Prediction',
+    '3 Point Prediction',
+    'Linear Interpolation',
+    'Spatial Linear Interpolation'
+]
+
+# ------------------------------------------------------------------
 # Load accuracy data
+# ------------------------------------------------------------------
 df = pd.read_csv('Data/accuracy.csv', index_col=0, parse_dates=True).dropna()
 
 # Get all unique methods from the columns
-# Columns are like: '3 Point Prediction (MAPE)', '3 Point Prediction (RMSE)', etc.
-# Extract unique method names
 all_columns = df.columns.tolist()
-methods = set()
+method_set = set()
 
 for col in all_columns:
     if col.endswith('(MAPE)'):
         method_name = col.replace(' (MAPE)', '')
-        methods.add(method_name)
+        method_set.add(method_name)
     elif col.endswith('(RMSE)'):
         method_name = col.replace(' (RMSE)', '')
-        methods.add(method_name)
+        method_set.add(method_name)
 
 # Remove 'gap_length' if it somehow got in there
-methods.discard('gap_length')
+method_set.discard('gap_length')
+
+all_methods = sorted(method_set)
+
+print(f"All methods found in data: {all_methods}")
 
 # ------------------------------------------------------------------
 # Define custom order for methods
@@ -30,24 +49,42 @@ desired_order = [
     '9 Point Prediction',
     '3 Point Prediction',
     'Linear Interpolation',
+    'Spatial Linear Interpolation',
     'Mean Imputation',
     'Polynomial',
-    'Cubic Spline'
+    'Cubic Spline',
+    'Cubic'
 ]
 
-# Filter to only include methods that exist in the data
-methods = [m for m in desired_order if m in methods]
+# Filter based on METHODS_TO_PLOT configuration
+if METHODS_TO_PLOT is not None:
+    # Only include methods that are both in METHODS_TO_PLOT and exist in data
+    methods_to_use = [m for m in METHODS_TO_PLOT if m in all_methods]
+    
+    # Warn about any requested methods that don't exist
+    missing = [m for m in METHODS_TO_PLOT if m not in all_methods]
+    if missing:
+        print(f"\nWarning: These requested methods were not found in the data: {missing}")
+    
+    # Order them according to desired_order, then add any extras
+    methods = [m for m in desired_order if m in methods_to_use]
+    remaining = [m for m in methods_to_use if m not in desired_order]
+    methods.extend(remaining)
+else:
+    # Plot all methods found in data
+    methods = [m for m in desired_order if m in all_methods]
+    remaining = [m for m in all_methods if m not in desired_order]
+    methods.extend(remaining)
 
-# Add any remaining methods not in desired_order (in case there are extras)
-remaining = [m for m in sorted(methods) if m not in desired_order]
-methods.extend(remaining)
+if not methods:
+    print("\nError: No methods to plot!")
+    exit(1)
 
-print(f"Found methods (in order): {methods}")
+print(f"\nMethods to plot (in order): {methods}")
 
 # ------------------------------------------------------------------
 # Group by gap length and calculate mean for both MAPE and RMSE
 # ------------------------------------------------------------------
-# Build aggregation dictionary with correct syntax
 agg_dict = {}
 for method in methods:
     mape_col = f'{method} (MAPE)'
@@ -71,19 +108,20 @@ print(f"Gap lengths: {averaged_data['gap_length'].tolist()}")
 # ------------------------------------------------------------------
 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
 
-# Define colors for each method (with custom mapping for key methods)
+# Define colors for each method
 color_map = {
     '9 Point Prediction': 'red',
     '3 Point Prediction': 'cyan',
     'Linear Interpolation': 'magenta',
+    'Spatial Linear Interpolation': 'black',
     'Mean Imputation': 'green',
     'Polynomial': 'blue',
     'Cubic Spline': 'orange',
-    'Cubic': 'orange'  # in case it's named 'Cubic' instead of 'Cubic Spline'
+    'Cubic': 'orange',
 }
 
 # Fallback colors for any additional methods
-fallback_colors = ['purple', 'brown', 'pink', 'gray', 'olive', 'navy']
+fallback_colors = ['purple', 'brown', 'pink', 'gray', 'olive', 'navy', 'teal', 'maroon']
 method_colors = {}
 fallback_idx = 0
 
@@ -94,7 +132,7 @@ for method in methods:
         method_colors[method] = fallback_colors[fallback_idx % len(fallback_colors)]
         fallback_idx += 1
 
-bar_width = 0.8 / len(methods)  # Adjust bar width based on number of methods
+bar_width = 0.8 / max(len(methods), 1)
 x = np.arange(len(averaged_data))
 
 # ------------------------------------------------------------------
@@ -150,7 +188,7 @@ ax2.grid(axis='y', alpha=0.3)
 # ------------------------------------------------------------------
 plt.tight_layout()
 
-# Save the plots
+os.makedirs('plots', exist_ok=True)
 plt.savefig('plots/accuracy_comparison_all_methods.png', dpi=300, bbox_inches='tight')
 plt.savefig('plots/accuracy_comparison_all_methods.eps', bbox_inches='tight')
 
