@@ -28,7 +28,7 @@ os.makedirs(MODELS_DIR, exist_ok=True)
 MODEL_PATH = os.path.join(MODELS_DIR, 'gapfill_3point_model.keras')
 SCALER_PATH = os.path.join(MODELS_DIR, 'gapfill_3point_scaler.pkl')
 
-# 3‑point model uses three stations: Est2, Est5 (target), Est8
+# 3‑point model uses Est2, Est5, Est8
 EST_COLUMNS_3 = ['Est2', 'Est5', 'Est8']
 
 # ------------------------------------------------------------------
@@ -62,27 +62,26 @@ train_df['week'] = train_df.index.isocalendar().week.astype('int32')
 train_df['dayofyear'] = train_df.index.dayofyear.astype('int32')
 train_df['sin_doy'] = np.sin(2 * np.pi * train_df['dayofyear'] / 365.25)
 train_df['cos_doy'] = np.cos(2 * np.pi * train_df['dayofyear'] / 365.25)
-
-# Month as additional seasonal indicator
 train_df['month'] = train_df.index.month.astype('int32')
 
 # ------------------------------------------------------------------
-# Build training dataset with robust missing handling
+# Robust missing handling for 3‑station inputs
 # ------------------------------------------------------------------
-cols_needed = EST_COLUMNS_3 + ['week', 'month', 'sin_doy', 'cos_doy']
-train_df = train_df[cols_needed]
-
-# 1) Require target (Est5) to be present
 stations = train_df[EST_COLUMNS_3].copy()
+
+# Require target Est5 to be present
 mask_target_present = stations['Est5'].notna()
 stations = stations[mask_target_present]
 
-# 2) Require at least one neighbor (Est2 or Est8) available
+# Require at least 1 neighbor (Est2 or Est8) to be present
 neighbors = stations.drop(columns=['Est5'])
-available_neighbors = neighbors.notna().sum(axis=1)
-stations = stations[available_neighbors >= 1]
+available_counts = neighbors.notna().sum(axis=1)
 
-# 3) Impute missing neighbor(s) with row-wise mean of available neighbor(s)
+min_required = 1
+enough_neighbors = available_counts >= min_required
+stations = stations[enough_neighbors]
+
+# Impute missing neighbors by row-wise mean of available neighbors
 neighbors = stations.drop(columns=['Est5'])
 row_means = neighbors.mean(axis=1, skipna=True)
 
@@ -90,7 +89,7 @@ for col in neighbors.columns:
     missing_mask = stations[col].isna()
     stations.loc[missing_mask, col] = row_means[missing_mask]
 
-# 4) Join back time features
+# Join back time features
 filled_train_df = stations.join(
     train_df[['week', 'month', 'sin_doy', 'cos_doy']], how='left'
 )
@@ -98,14 +97,34 @@ filled_train_df = stations.join(
 print(f"Rows in filled_train_df after missing handling: {len(filled_train_df)}")
 
 # ------------------------------------------------------------------
+# Feature engineering: spatial mean + deviations (Suggestion 2.a)
+# ------------------------------------------------------------------
+neighbor_cols = [c for c in EST_COLUMNS_3 if c != 'Est5']
+neighbors_df = filled_train_df[neighbor_cols]
+
+# Spatial mean of neighbors
+filled_train_df['spatial_mean'] = neighbors_df.mean(axis=1, skipna=True)
+
+# Deviations from spatial mean for each neighbor
+for col in neighbor_cols:
+    filled_train_df[f'{col}_dev'] = neighbors_df[col] - filled_train_df['spatial_mean']
+
+# ------------------------------------------------------------------
 # Features and target
 # ------------------------------------------------------------------
-feature_cols = ['week', 'month', 'sin_doy', 'cos_doy'] + [col for col in EST_COLUMNS_3 if col != 'Est5']
+# Features: time + spatial_mean + deviations
+feature_cols = (
+    ['week', 'month', 'sin_doy', 'cos_doy', 'spatial_mean'] +
+    [f'{col}_dev' for col in neighbor_cols]
+)
 
 X = filled_train_df[feature_cols].astype(float32).values
-y = filled_train_df['Est5'].astype(float32).values
+
+# Target: predict the CORRECTION to spatial mean (Suggestion 2.a)
+y = (filled_train_df['Est5'] - filled_train_df['spatial_mean']).astype(float32).values
 
 print(f"Training 3‑point model on {X.shape[0]} samples, {X.shape[1]} features.")
+print(f"Target: correction to spatial mean (mean={y.mean():.4f}, std={y.std():.4f})")
 
 # ------------------------------------------------------------------
 # Scale features
@@ -124,26 +143,29 @@ split_idx = int(n_samples * 0.8)
 X_train, X_val = X_scaled[:split_idx], X_scaled[split_idx:]
 y_train, y_val = y[:split_idx], y[split_idx:]
 
+# Also keep spatial_mean for validation reconstruction
+spatial_mean_val = filled_train_df['spatial_mean'].iloc[split_idx:].values
+est5_true_val = filled_train_df['Est5'].iloc[split_idx:].values
+
 print(f"Train samples: {X_train.shape[0]}, Val samples: {X_val.shape[0]}")
 
 # ------------------------------------------------------------------
-# Define optimized model (smaller for ~2400 samples)
+# Define optimized model (Suggestions 1.a, 1.b, 1.c)
 # ------------------------------------------------------------------
 input_dim = X_train.shape[1]
 
 model = keras.Sequential([
     layers.Input(shape=(input_dim,)),
-    layers.Dense(48, activation='relu', kernel_regularizer=keras.regularizers.l2(0.001)),
-    layers.Dropout(0.15),
-    layers.Dense(24, activation='relu', kernel_regularizer=keras.regularizers.l2(0.001)),
-    layers.Dropout(0.15),
-    layers.Dense(12, activation='relu', kernel_regularizer=keras.regularizers.l2(0.001)),
+    layers.Dense(48, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-4)),
+    layers.Dense(24, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-4)),
+    layers.Dense(12, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-4)),
     layers.Dense(1)
-], name='3point_gapfill')
+], name='3point_gapfill_v2')
 
+# Use MAE loss (Suggestion 1.c)
 model.compile(
     optimizer=keras.optimizers.Adam(learning_rate=1e-3),
-    loss=keras.losses.Huber(delta=0.5),  # tuned for skewed chlorophyll data
+    loss='mae',
     metrics=[
         keras.metrics.MeanAbsoluteError(name='mae'),
         keras.metrics.MeanAbsolutePercentageError(name='mape'),
@@ -154,19 +176,19 @@ model.compile(
 model.summary()
 
 # ------------------------------------------------------------------
-# Callbacks
+# Callbacks (Suggestion 1.b: reduced patience)
 # ------------------------------------------------------------------
 callbacks = [
     keras.callbacks.EarlyStopping(
         monitor='val_loss',
-        patience=40,
+        patience=25,
         restore_best_weights=True,
         verbose=1
     ),
     keras.callbacks.ReduceLROnPlateau(
         monitor='val_loss',
         factor=0.5,
-        patience=15,
+        patience=10,
         min_lr=1e-6,
         verbose=1
     )
@@ -189,18 +211,34 @@ history = model.fit(
 # ------------------------------------------------------------------
 # Evaluate on validation set
 # ------------------------------------------------------------------
-y_val_pred = model.predict(X_val, verbose=0).flatten()
+y_val_correction_pred = model.predict(X_val, verbose=0).flatten()
 
-val_mae = mean_absolute_error(y_val, y_val_pred)
-val_rmse = root_mean_squared_error(y_val, y_val_pred)
-val_mape = mean_absolute_percentage_error(y_val, y_val_pred)
+# Reconstruct Est5 = spatial_mean + correction
+y_val_pred = spatial_mean_val + y_val_correction_pred
+
+val_mae = mean_absolute_error(est5_true_val, y_val_pred)
+val_rmse = root_mean_squared_error(est5_true_val, y_val_pred)
+val_mape = mean_absolute_percentage_error(est5_true_val, y_val_pred)
+
+# Also compute baseline (spatial mean alone)
+baseline_mae = mean_absolute_error(est5_true_val, spatial_mean_val)
+baseline_rmse = root_mean_squared_error(est5_true_val, spatial_mean_val)
+baseline_mape = mean_absolute_percentage_error(est5_true_val, spatial_mean_val)
 
 print("\n" + "="*60)
 print("VALIDATION PERFORMANCE (3‑point model)")
 print("="*60)
+print("Baseline (Spatial Mean only):")
+print(f"  MAE  = {baseline_mae:.4f}")
+print(f"  RMSE = {baseline_rmse:.4f}")
+print(f"  MAPE = {baseline_mape * 100:.2f}%")
+print("-"*60)
+print("Neural Model (Spatial Mean + Correction):")
 print(f"  MAE  = {val_mae:.4f}")
 print(f"  RMSE = {val_rmse:.4f}")
 print(f"  MAPE = {val_mape * 100:.2f}%")
+print("-"*60)
+print(f"Improvement: RMSE {baseline_rmse - val_rmse:+.4f}, MAPE {(baseline_mape - val_mape)*100:+.2f}%")
 print("="*60)
 
 # ------------------------------------------------------------------

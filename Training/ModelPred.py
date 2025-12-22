@@ -26,28 +26,10 @@ EST_COLUMNS_9 = ['Est1', 'Est2', 'Est3', 'Est4', 'Est5', 'Est6', 'Est7', 'Est8',
 TARGET_COL = 'Est5'
 
 # ------------------------------------------------------------------
-# Helper: prepare features for a given model
+# Helper: prepare features for a given model (NEW VERSION)
 # ------------------------------------------------------------------
 def prepare_features_for_model(df, est_columns, min_required_neighbors):
-    """
-    df: DataFrame with Est columns + time features:
-        ['week', 'month', 'sin_doy', 'cos_doy'].
-    est_columns: list of station columns including 'Est5'.
-    min_required_neighbors: minimum number of non-missing neighbor stations
-                            required to form a valid input row.
 
-    Returns:
-        X  (np.array[ n_samples, n_features ])
-        idx (Index of dates where features are valid)
-
-    Strategy (matches training logic as closely as possible):
-        - Use only neighbor stations (all est_columns except target).
-        - Require at least `min_required_neighbors` neighbors to be non-NaN.
-        - Fill remaining missing neighbors with the row-wise mean
-          of available neighbors.
-        - Features = ['week', 'month', 'sin_doy', 'cos_doy'] +
-                     [neighbors in same order as training].
-    """
     target = TARGET_COL
     time_features = ['week', 'month', 'sin_doy', 'cos_doy']
 
@@ -56,6 +38,7 @@ def prepare_features_for_model(df, est_columns, min_required_neighbors):
 
     valid_indices = []
     feature_rows = []
+    spatial_means = []
 
     # Neighbor columns (no target)
     neighbor_cols = [c for c in est_columns if c != target]
@@ -68,30 +51,35 @@ def prepare_features_for_model(df, est_columns, min_required_neighbors):
         if len(available) < min_required_neighbors:
             continue
 
-        # Fill missing neighbors with mean of available neighbors
-        mean_val = available.mean()
-        neighbors_filled = neighbors.fillna(mean_val)
+        # Compute spatial mean from available neighbors
+        spatial_mean = available.mean()
 
-        # Build feature vector in the same order as training
-        feature_cols = time_features + neighbor_cols
-        feature_vals = pd.concat(
-            [row[time_features], neighbors_filled]
-        )[feature_cols]
+        # Fill missing neighbors with spatial mean
+        neighbors_filled = neighbors.fillna(spatial_mean)
 
-        if feature_vals.isna().any():
+        # Compute deviations from spatial mean
+        deviations = neighbors_filled - spatial_mean
+
+        # Build feature vector: time + spatial_mean + deviations
+        # Order must match training: ['week', 'month', 'sin_doy', 'cos_doy', 'spatial_mean'] + deviations
+        feature_vals = list(row[time_features].values) + [spatial_mean] + list(deviations.values)
+
+        if np.isnan(feature_vals).any():
             continue
 
         valid_indices.append(idx)
-        feature_rows.append(feature_vals.values.astype(float32))
+        feature_rows.append(np.array(feature_vals, dtype=float32))
+        spatial_means.append(spatial_mean)
 
     if not feature_rows:
-        # Return empty array with correct feature dimension
-        n_features = len(time_features) + len(neighbor_cols)
-        return np.empty((0, n_features), dtype=float32), pd.Index([])
+        # Return empty arrays with correct dimensions
+        n_features = len(time_features) + 1 + len(neighbor_cols)  # +1 for spatial_mean
+        return np.empty((0, n_features), dtype=float32), np.empty(0, dtype=float32), pd.Index([])
 
     X = np.vstack(feature_rows)
+    spatial_means = np.array(spatial_means, dtype=float32)
     indices = pd.Index(valid_indices)
-    return X, indices
+    return X, spatial_means, indices
 
 # ------------------------------------------------------------------
 # Load data and add time features (must match training scripts)
@@ -109,6 +97,7 @@ data['cos_doy'] = np.cos(2 * np.pi * data['dayofyear'] / 365.25)
 # ------------------------------------------------------------------
 # Load models and scalers
 # ------------------------------------------------------------------
+print("Loading models and scalers...")
 model_3 = keras.models.load_model(MODEL_3_PATH)
 with open(SCALER_3_PATH, 'rb') as f:
     scaler_3 = pickle.load(f)
@@ -121,14 +110,20 @@ with open(SCALER_9_PATH, 'rb') as f:
 # 3‑point model predictions
 # ------------------------------------------------------------------
 # Training logic: at least 1 neighbor (Est2 or Est8) present
-X3, idx3 = prepare_features_for_model(data, EST_COLUMNS_3, min_required_neighbors=1)
+X3, spatial_means_3, idx3 = prepare_features_for_model(
+    data, EST_COLUMNS_3, min_required_neighbors=1
+)
 print(f"3‑point model: making predictions for {len(idx3)} dates.")
 
 pred3_full = np.full(shape=(len(data),), fill_value=np.nan, dtype=float32)
 
 if len(idx3) > 0:
     X3_scaled = scaler_3.transform(X3)
-    y3_pred = model_3.predict(X3_scaled, verbose=0).flatten().astype(float32)
+    # Model predicts CORRECTION to spatial mean
+    corrections_3 = model_3.predict(X3_scaled, verbose=0).flatten().astype(float32)
+    
+    # Reconstruct: Est5 = spatial_mean + correction
+    y3_pred = spatial_means_3 + corrections_3
 
     # Map predictions back to full index
     idx_pos = data.index.get_indexer(idx3)
@@ -138,7 +133,7 @@ if len(idx3) > 0:
 # 9‑point model predictions
 # ------------------------------------------------------------------
 # Training logic: at least half of 8 neighbors (4) present
-X9, idx9 = prepare_features_for_model(
+X9, spatial_means_9, idx9 = prepare_features_for_model(
     data,
     EST_COLUMNS_9,
     min_required_neighbors=4
@@ -149,7 +144,11 @@ pred9_full = np.full(shape=(len(data),), fill_value=np.nan, dtype=float32)
 
 if len(idx9) > 0:
     X9_scaled = scaler_9.transform(X9)
-    y9_pred = model_9.predict(X9_scaled, verbose=0).flatten().astype(float32)
+    # Model predicts CORRECTION to spatial mean
+    corrections_9 = model_9.predict(X9_scaled, verbose=0).flatten().astype(float32)
+    
+    # Reconstruct: Est5 = spatial_mean + correction
+    y9_pred = spatial_means_9 + corrections_9
 
     idx_pos = data.index.get_indexer(idx9)
     pred9_full[idx_pos] = y9_pred
@@ -191,4 +190,5 @@ filled_df['9 Point Prediction'] = pred9_series
 
 filled_df.to_csv(FILLED_PATH)
 
-print(f"Saved predictions to: {FILLED_PATH}")
+print(f"\nSaved predictions to: {FILLED_PATH}")
+print("="*60)
