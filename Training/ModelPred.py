@@ -25,46 +25,98 @@ EST_COLUMNS_3 = ['Est2', 'Est5', 'Est8']
 EST_COLUMNS_9 = ['Est1', 'Est2', 'Est3', 'Est4', 'Est5', 'Est6', 'Est7', 'Est8', 'Est9']
 TARGET_COL = 'Est5'
 
-# ------------------------------------------------------------------
-# Helper: prepare features for a given model
-# ------------------------------------------------------------------
-def prepare_features_for_model(df, est_columns, min_required_neighbors):
+# How far to look backward/forward (in days) when no neighbors are available today
+TEMPORAL_WINDOW_DAYS = 7
 
+# ------------------------------------------------------------------
+# Helper: prepare features for a given model (with temporal fallback)
+# ------------------------------------------------------------------
+def prepare_features_for_model(df, est_columns):
+    """
+    df: DataFrame with Est columns + time features:
+        ['week', 'month', 'sin_doy', 'cos_doy'].
+    est_columns: list of station columns including 'Est5'.
+
+    Returns:
+        X  (np.array[ n_samples, n_features ])
+        spatial_means (np.array[ n_samples ]) - for reconstruction
+        idx (Index of dates where features are valid)
+
+    Strategy (matches updated training logic, with better fallback):
+        - Neighbor columns: all est_columns except target.
+        - For each date:
+            * neighbors_today = neighbor values on that date (may be all NaN).
+            * If some neighbors_today are available:
+                  spatial_mean = mean(neighbors_today)
+            * Else (no neighbors_today):
+                  - Look in +-TEMPORAL_WINDOW_DAYS around that date
+                    for neighbor values on other days.
+                  - If we find any, spatial_mean = mean of those values.
+                  - If still none, fallback to global neighbor mean.
+            * Fill missing neighbors_today with spatial_mean.
+            * deviations = neighbors_filled_today - spatial_mean.
+            * Features =
+                ['week', 'month', 'sin_doy', 'cos_doy', 'spatial_mean'] +
+                [deviation for each neighbor (same order as training)].
+        - Model predicts CORRECTION to spatial_mean.
+        - Final prediction = spatial_mean + correction.
+    """
     target = TARGET_COL
     time_features = ['week', 'month', 'sin_doy', 'cos_doy']
 
     required_cols = est_columns + time_features
     temp = df[required_cols].copy()
 
+    # Neighbor columns (no target)
+    neighbor_cols = [c for c in est_columns if c != target]
+
+    # Precompute global neighbor mean (last-resort fallback)
+    if neighbor_cols:
+        global_neighbor_mean = df[neighbor_cols].stack().mean()
+    else:
+        global_neighbor_mean = np.nan
+
+    if np.isnan(global_neighbor_mean):
+        global_neighbor_mean = 0.0  # extreme fallback
+
+    # For temporal fallback, we’ll use a rolling-style lookup per row
+    all_dates = temp.index
+
     valid_indices = []
     feature_rows = []
     spatial_means = []
 
-    # Neighbor columns (no target)
-    neighbor_cols = [c for c in est_columns if c != target]
+    for idx in all_dates:
+        row = temp.loc[idx]
+        neighbors_today = row[neighbor_cols]
+        available_today = neighbors_today.dropna()
 
-    for idx, row in temp.iterrows():
-        neighbors = row[neighbor_cols]
-        available = neighbors.dropna()
+        # 1) If we have neighbors today, use them
+        if len(available_today) > 0:
+            spatial_mean = available_today.mean()
+        else:
+            # 2) Temporal fallback: look around this date
+            start = idx - pd.Timedelta(days=TEMPORAL_WINDOW_DAYS)
+            end = idx + pd.Timedelta(days=TEMPORAL_WINDOW_DAYS)
+            # slice neighbors in the time window
+            window_neighbors = df.loc[start:end, neighbor_cols]
 
-        # Not enough neighbors -> skip
-        if len(available) < min_required_neighbors:
-            continue
+            available_window = window_neighbors.stack().dropna()
+            if len(available_window) > 0:
+                spatial_mean = available_window.mean()
+            else:
+                # 3) Global fallback (very sparse case)
+                spatial_mean = global_neighbor_mean
 
-        # Compute spatial mean from available neighbors
-        spatial_mean = available.mean()
-
-        # Fill missing neighbors with spatial mean
-        neighbors_filled = neighbors.fillna(spatial_mean)
-
-        # Compute deviations from spatial mean
+        # Fill today's missing neighbors with chosen spatial_mean
+        neighbors_filled = neighbors_today.fillna(spatial_mean)
         deviations = neighbors_filled - spatial_mean
 
         # Build feature vector: time + spatial_mean + deviations
-        # Order must match training: ['week', 'month', 'sin_doy', 'cos_doy', 'spatial_mean'] + deviations
         feature_vals = list(row[time_features].values) + [spatial_mean] + list(deviations.values)
 
         if np.isnan(feature_vals).any():
+            # Should not happen often, but safe-guard
             continue
 
         valid_indices.append(idx)
@@ -72,8 +124,7 @@ def prepare_features_for_model(df, est_columns, min_required_neighbors):
         spatial_means.append(spatial_mean)
 
     if not feature_rows:
-        # Return empty arrays with correct dimensions
-        n_features = len(time_features) + 1 + len(neighbor_cols)  # +1 for spatial_mean
+        n_features = len(time_features) + 1 + len(neighbor_cols)
         return np.empty((0, n_features), dtype=float32), np.empty(0, dtype=float32), pd.Index([])
 
     X = np.vstack(feature_rows)
@@ -107,11 +158,10 @@ with open(SCALER_9_PATH, 'rb') as f:
     scaler_9 = pickle.load(f)
 
 # ------------------------------------------------------------------
-# 3‑point model predictions
+# 3‑point model predictions (ALL dates via temporal fallback)
 # ------------------------------------------------------------------
-# Training logic: at least 1 neighbor (Est2 or Est8) present
 X3, spatial_means_3, idx3 = prepare_features_for_model(
-    data, EST_COLUMNS_3, min_required_neighbors=1
+    data, EST_COLUMNS_3
 )
 print(f"3‑point model: making predictions for {len(idx3)} dates.")
 
@@ -130,13 +180,10 @@ if len(idx3) > 0:
     pred3_full[idx_pos] = y3_pred
 
 # ------------------------------------------------------------------
-# 9‑point model predictions
+# 9‑point model predictions (ALL dates via temporal fallback)
 # ------------------------------------------------------------------
-# Training logic: at least 4 neighbors present
 X9, spatial_means_9, idx9 = prepare_features_for_model(
-    data,
-    EST_COLUMNS_9,
-    min_required_neighbors=4
+    data, EST_COLUMNS_9
 )
 print(f"9‑point model: making predictions for {len(idx9)} dates.")
 
@@ -154,7 +201,7 @@ if len(idx9) > 0:
     pred9_full[idx_pos] = y9_pred
 
 # ------------------------------------------------------------------
-# Compute MAPE (for info; excludes NaNs and real gaps)
+# Compute MAPE (for info; over all days with observed Est5)
 # ------------------------------------------------------------------
 y_true = data[TARGET_COL].values
 
@@ -180,7 +227,6 @@ pred9_series = pd.Series(pred9_full, index=data.index, name='9 Point Prediction'
 
 if os.path.exists(FILLED_PATH) and os.path.getsize(FILLED_PATH) > 0:
     filled_df = pd.read_csv(FILLED_PATH, index_col=0, parse_dates=True)
-    # Align to main data index
     filled_df = filled_df.reindex(data.index)
 else:
     filled_df = pd.DataFrame(index=data.index)
