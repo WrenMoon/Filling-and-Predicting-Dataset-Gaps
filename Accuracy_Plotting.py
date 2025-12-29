@@ -8,15 +8,15 @@ import numpy as np
 # ------------------------------------------------------------------
 # Set to None to plot ALL methods found in the data
 # Or provide a list of method names you want to include
-# METHODS_TO_PLOT = None  # Plot all methods
+METHODS_TO_PLOT = None  # Plot all methods
 
 # Example: Only plot specific methods
-METHODS_TO_PLOT = [
-    '9 Point Prediction',
-    '3 Point Prediction',
-    'Linear Interpolation',
-    'Spatial Linear Interpolation'
-]
+# METHODS_TO_PLOT = [
+#     '9 Point Prediction',
+#     '3 Point Prediction',
+#     'Linear Interpolation',
+#     'Spatial Linear Interpolation'
+# ]
 
 # ------------------------------------------------------------------
 # Load accuracy data

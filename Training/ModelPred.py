@@ -26,7 +26,7 @@ EST_COLUMNS_9 = ['Est1', 'Est2', 'Est3', 'Est4', 'Est5', 'Est6', 'Est7', 'Est8',
 TARGET_COL = 'Est5'
 
 # ------------------------------------------------------------------
-# Helper: prepare features for a given model (NEW VERSION)
+# Helper: prepare features for a given model
 # ------------------------------------------------------------------
 def prepare_features_for_model(df, est_columns, min_required_neighbors):
 
@@ -132,7 +132,7 @@ if len(idx3) > 0:
 # ------------------------------------------------------------------
 # 9‑point model predictions
 # ------------------------------------------------------------------
-# Training logic: at least half of 8 neighbors (4) present
+# Training logic: at least 4 neighbors present
 X9, spatial_means_9, idx9 = prepare_features_for_model(
     data,
     EST_COLUMNS_9,

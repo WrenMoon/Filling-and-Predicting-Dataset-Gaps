@@ -40,7 +40,7 @@ tf.random.set_seed(SEED)
 os.environ['PYTHONHASHSEED'] = str(SEED)
 
 # ------------------------------------------------------------------
-# Load data
+# Load data, restricted to training windown
 # ------------------------------------------------------------------
 data = pd.read_csv(DATA_PATH, index_col=0, parse_dates=True)
 data = data.sort_index()
@@ -49,7 +49,6 @@ dates = pd.read_csv(DATES_PATH)
 start_date = dates.loc[0, 'start_date']
 end_date = dates.loc[0, 'end_date']
 
-# Restrict to training window
 train_df = data.loc[start_date:end_date].copy()
 
 print(f"Date range: {start_date} to {end_date}")
@@ -65,15 +64,13 @@ train_df['cos_doy'] = np.cos(2 * np.pi * train_df['dayofyear'] / 365.25)
 train_df['month'] = train_df.index.month.astype('int32')
 
 # ------------------------------------------------------------------
-# Robust missing handling for 9‑station inputs
+# handling gaps in 9‑station inputs
 # ------------------------------------------------------------------
 stations = train_df[EST_COLUMNS_9].copy()
 
-# Require target Est5 to be present
 mask_target_present = stations['Est5'].notna()
 stations = stations[mask_target_present]
 
-# Require at least half of non‑target stations to be present
 neighbors = stations.drop(columns=['Est5'])
 available_counts = neighbors.notna().sum(axis=1)
 
@@ -81,7 +78,6 @@ min_required = int(np.ceil((len(EST_COLUMNS_9) - 1) / 2.0))  # half of 8 neighbo
 enough_neighbors = available_counts >= min_required
 stations = stations[enough_neighbors]
 
-# Impute missing neighbors by row-wise mean of available neighbors
 neighbors = stations.drop(columns=['Est5'])
 row_means = neighbors.mean(axis=1, skipna=True)
 
@@ -96,16 +92,12 @@ filled_train_df = stations.join(
 
 print(f"Rows in filled_train_df after missing handling: {len(filled_train_df)}")
 
-# ------------------------------------------------------------------
-# Feature engineering: spatial mean + deviations (Suggestion 2.a)
-# ------------------------------------------------------------------
+# Spatial mean calculations
 neighbor_cols = [c for c in EST_COLUMNS_9 if c != 'Est5']
 neighbors_df = filled_train_df[neighbor_cols]
 
-# Spatial mean of neighbors
 filled_train_df['spatial_mean'] = neighbors_df.mean(axis=1, skipna=True)
 
-# Deviations from spatial mean for each neighbor
 for col in neighbor_cols:
     filled_train_df[f'{col}_dev'] = neighbors_df[col] - filled_train_df['spatial_mean']
 
@@ -127,14 +119,11 @@ print(f"Training 9‑point model on {X.shape[0]} samples, {X.shape[1]} features.
 print(f"Target: correction to spatial mean (mean={y.mean():.4f}, std={y.std():.4f})")
 
 # ------------------------------------------------------------------
-# Scale features
+# Model Architecture 
 # ------------------------------------------------------------------
 scaler = StandardScaler().fit(X)
 X_scaled = scaler.transform(X)
 
-# ------------------------------------------------------------------
-# Time‑aware train/validation split (no shuffling)
-# ------------------------------------------------------------------
 n_samples = X_scaled.shape[0]
 if n_samples < 20:
     raise ValueError("Not enough samples to train reliably. Check date range.")
@@ -143,15 +132,12 @@ split_idx = int(n_samples * 0.8)
 X_train, X_val = X_scaled[:split_idx], X_scaled[split_idx:]
 y_train, y_val = y[:split_idx], y[split_idx:]
 
-# Also keep spatial_mean for validation reconstruction
+# keep spatial_mean for validation reconstruction
 spatial_mean_val = filled_train_df['spatial_mean'].iloc[split_idx:].values
 est5_true_val = filled_train_df['Est5'].iloc[split_idx:].values
 
 print(f"Train samples: {X_train.shape[0]}, Val samples: {X_val.shape[0]}")
 
-# ------------------------------------------------------------------
-# Define optimized model (Suggestions 1.a, 1.b, 1.c)
-# ------------------------------------------------------------------
 input_dim = X_train.shape[1]
 
 model = keras.Sequential([
@@ -162,7 +148,6 @@ model = keras.Sequential([
     layers.Dense(1)
 ], name='9point_gapfill_v2')
 
-# Use MAE loss (Suggestion 1.c)
 model.compile(
     optimizer=keras.optimizers.Adam(learning_rate=1e-3),
     loss='mae',
@@ -175,9 +160,6 @@ model.compile(
 
 model.summary()
 
-# ------------------------------------------------------------------
-# Callbacks (Suggestion 1.b: reduced patience)
-# ------------------------------------------------------------------
 callbacks = [
     keras.callbacks.EarlyStopping(
         monitor='val_loss',
@@ -208,9 +190,7 @@ history = model.fit(
     verbose=2
 )
 
-# ------------------------------------------------------------------
 # Evaluate on validation set
-# ------------------------------------------------------------------
 y_val_correction_pred = model.predict(X_val, verbose=0).flatten()
 
 # Reconstruct Est5 = spatial_mean + correction
