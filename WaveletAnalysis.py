@@ -52,8 +52,8 @@ print(f"Std value: {original_values.std():.4f}")
 # 2. INTRODUCE ARTIFICIAL GAP
 # ============================================================================
 print("\n[2] Introducing artificial gap...")
-gap_start_idx = 120
-gap_length = 50
+gap_start_idx = 90
+gap_length = 30
 gap_end_idx = gap_start_idx + gap_length
 
 # Create series with gap
