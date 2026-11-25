@@ -129,6 +129,8 @@ n_samples = X_scaled.shape[0]
 if n_samples < 20:
     raise ValueError("Not enough samples to train reliably. Check date range.")
 
+# Chronological held-out split: the first 80% is used for fitting and the
+# later 20% is held out for validation/model-selection callbacks.
 split_idx = int(n_samples * 0.8)
 X_train, X_val = X_scaled[:split_idx], X_scaled[split_idx:]
 y_train, y_val = y[:split_idx], y[split_idx:]

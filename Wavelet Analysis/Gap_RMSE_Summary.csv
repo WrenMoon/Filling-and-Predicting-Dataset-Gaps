@@ -1,0 +1,5 @@
+,Gap_RMSE
+Linear Interpolation,0.020016606009237242
+Cubic Interpolation,0.015180297346463825
+3 Point Prediction,0.011590901920681742
+9 Point Prediction,0.003089432654890228

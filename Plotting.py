@@ -2,204 +2,330 @@ import os
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.metrics import mean_absolute_percentage_error, root_mean_squared_error
+
 from datetime import timedelta
 from scipy.interpolate import interp1d
-from matplotlib import rcParams
-
-# Create 'plots' directory if it doesn't exist
-os.makedirs('plots', exist_ok=True)
-
-# Load dates
-dates = pd.read_csv('Data/Dates.csv')
-
-# Load filled values from CSV (neural network predictions)
-filled_df = pd.read_csv('Data/Filled_Chlorophyll_Data.csv', index_col=0, parse_dates=True)
-
-start_date = pd.to_datetime(dates.loc[0, 'start_date'])
-end_date = pd.to_datetime(dates.loc[0, 'end_date'])
-gap_start = pd.to_datetime(dates.loc[0, 'gap_start']) - timedelta(days=1)
-gap_end = pd.to_datetime(dates.loc[0, 'gap_end']) + timedelta(days=1)
-
-plot_start = max(gap_start - timedelta(days=50), start_date)
-plot_end = min(gap_end + timedelta(days=50), end_date)
-
-# Load original data for MAPE calculation
-original_data = pd.read_csv('Data/Chlor_A data.csv', index_col=0, parse_dates=True)
-values = original_data['Est5'].loc[start_date:end_date].copy()
-
-# Create artificial gap
-mask = (values.index >= gap_start) & (values.index <= gap_end)
-gap_index = values.index[mask]
-values_with_gap = values.copy()
-values_with_gap[mask] = np.nan
+from sklearn.metrics import root_mean_squared_error
+import matplotlib.dates as mdates
 
 # ------------------------------------------------------------------
-# Apply traditional interpolation methods
+# CONFIG
+# ------------------------------------------------------------------
+OUT_DIR = "outputs"
+DATA_DIR = "Data"
+os.makedirs(OUT_DIR, exist_ok=True)
+
+# Files
+DATES_CSV = os.path.join(DATA_DIR, "Dates.csv")
+FILLED_CSV = os.path.join(DATA_DIR, "Filled_Chlorophyll_Data.csv")
+ORIG_CSV = os.path.join(DATA_DIR, "Chlor_A data.csv")
+
+# Column in original data
+ORIG_COL = "Est5"
+
+# Plot window padding around gap
+PADDING_DAYS = 50
+
+# Spectral analysis settings
+FFT_RESAMPLE_FREQ = "1D"     # resample to daily for uniform spacing
+FFT_INTERP_METHOD = "time"   # interpolate missing after resample
+WINDOW = "hann"              # 'hann' or None
+
+# ------------------------------------------------------------------
+# LOAD INPUTS
+# ------------------------------------------------------------------
+dates = pd.read_csv(DATES_CSV)
+
+filled_df = pd.read_csv(FILLED_CSV, index_col=0, parse_dates=True)
+
+original_data = pd.read_csv(ORIG_CSV, index_col=0, parse_dates=True)
+values_full = original_data[ORIG_COL].copy()
+
+start_date = pd.to_datetime(dates.loc[0, "start_date"])
+end_date = pd.to_datetime(dates.loc[0, "end_date"])
+
+# NOTE: keep your existing ±1 day behavior (as in your code)
+gap_start = pd.to_datetime(dates.loc[0, "gap_start"]) - timedelta(days=1)
+gap_end = pd.to_datetime(dates.loc[0, "gap_end"]) + timedelta(days=1)
+
+# Slice the analysis window
+values = values_full.loc[start_date:end_date].copy()
+
+# Plot window
+plot_start = max(gap_start - timedelta(days=PADDING_DAYS), start_date)
+plot_end = min(gap_end + timedelta(days=PADDING_DAYS), end_date)
+
+# ------------------------------------------------------------------
+# CREATE ARTIFICIAL GAP
+# ------------------------------------------------------------------
+mask = (values.index >= gap_start) & (values.index <= gap_end)
+gap_index = values.index[mask]
+
+values_with_gap = values.copy()
+values_with_gap.loc[mask] = np.nan
+
+# ------------------------------------------------------------------
+# GAP FILL METHODS (3pt, 9pt, linear, cubic)
 # ------------------------------------------------------------------
 methods = {}
 
-# Linear Interpolation
-methods['Linear Interpolation'] = values_with_gap.interpolate(method='linear')
+# Linear
+methods["Linear"] = values_with_gap.interpolate(method="linear")
 
-
-# Polynomial Interpolation (degree 2)
+# Cubic (may fail if insufficient points)
 try:
-    valid_indices = values_with_gap.dropna().index
-    valid_values = values_with_gap.dropna().values
-    if len(valid_values) >= 3:
-        poly_interp = interp1d(
-            valid_indices.astype(np.int64) // 10**9,
-            valid_values,
-            kind='quadratic',
-            fill_value='extrapolate'
-        )
-        methods['Polynomial'] = pd.Series(
-            poly_interp(values_with_gap.index.astype(np.int64) // 10**9),
-            index=values_with_gap.index
-        )
-    else:
-        methods['Polynomial'] = values_with_gap.copy()
-except:
-    methods['Polynomial'] = values_with_gap.copy()
+    methods["Cubic"] = values_with_gap.interpolate(method="cubic")
+except Exception:
+    # fallback to linear if cubic fails
+    methods["Cubic"] = values_with_gap.interpolate(method="linear")
 
-# Cubic Interpolation
-methods['Cubic'] = values_with_gap.interpolate(method='cubic')
+# Neural net columns (if present)
+if "3 Point Prediction" in filled_df.columns:
+    # Align to our index and window
+    methods["3pt_NN"] = filled_df["3 Point Prediction"].reindex(values.index)
+else:
+    methods["3pt_NN"] = pd.Series(index=values.index, dtype=float)
 
-# Mean Imputation
-mean_value = values_with_gap.mean()
-methods['Mean Imputation'] = values_with_gap.fillna(mean_value)
+if "9 Point Prediction" in filled_df.columns:
+    methods["9pt_NN"] = filled_df["9 Point Prediction"].reindex(values.index)
+else:
+    methods["9pt_NN"] = pd.Series(index=values.index, dtype=float)
 
-# Add neural network predictions from filled_df
-if '3 Point Prediction' in filled_df.columns:
-    methods['3 Point Prediction'] = filled_df['3 Point Prediction']
-if '9 Point Prediction' in filled_df.columns:
-    methods['9 Point Prediction'] = filled_df['9 Point Prediction']
+# Ensure all are Series with same index
+for k in list(methods.keys()):
+    methods[k] = pd.Series(methods[k], index=values.index)
 
 # ------------------------------------------------------------------
-# Calculate metrics for all methods
+# METRICS (RMSE over the gap only)
 # ------------------------------------------------------------------
-mape_results = {}
 rmse_results = {}
-invalid_run = False
 
-for method_name, method_values in methods.items():
-    # Align true and predicted values on the gap index
-    y_true = values.loc[gap_index]
-    y_pred = method_values.loc[gap_index]
-    
-    # Combine and drop NaN/inf rows
-    pair = pd.concat(
-        [y_true.rename('true'), y_pred.rename('pred')],
-        axis=1
-    )
+y_true_gap = values.loc[gap_index]
+
+for name, pred in methods.items():
+    y_pred_gap = pred.loc[gap_index]
+
+    pair = pd.concat([y_true_gap.rename("true"), y_pred_gap.rename("pred")], axis=1)
     pair = pair.replace([np.inf, -np.inf], np.nan).dropna()
-    
+
     if len(pair) == 0:
-        print(f"Skipping gap: no valid data for method '{method_name}' in gap window.")
-        invalid_run = True
-        break
-    
-    y_t = pair['true'].to_numpy(dtype=float)
-    y_p = pair['pred'].to_numpy(dtype=float)
-    
-    try:
-        mape = mean_absolute_percentage_error(y_t, y_p)
-        rmse = root_mean_squared_error(y_t, y_p)
-        
-        if not np.isfinite(mape) or not np.isfinite(rmse):
-            print(f"Skipping gap: non-finite metric for method '{method_name}'.")
-            invalid_run = True
-            break
-        
-        mape_results[method_name] = mape
-        rmse_results[method_name] = rmse
-    except Exception as e:
-        print(f"Error calculating metrics for '{method_name}': {e}")
-        invalid_run = True
-        break
+        rmse_results[name] = np.nan
+        continue
 
-# If anything was invalid (NaNs, no overlap, etc.), scrap this gap
-if invalid_run or not mape_results or not rmse_results:
-    raise SystemExit(1)
+    rmse_results[name] = root_mean_squared_error(
+        pair["true"].to_numpy(dtype=float),
+        pair["pred"].to_numpy(dtype=float),
+    )
 
-# ----------------------------------------------------------------------
-# Filter: keep only gaps where a neural net is the best model
-# ----------------------------------------------------------------------
-candidate_methods = ['Linear Interpolation', '3 Point Prediction', '9 Point Prediction']
-
-# Keep only candidates that actually have an RMSE computed
-valid_candidates = {
-    m: rmse_results[m]
-    for m in candidate_methods
-    if m in rmse_results and rmse_results[m] is not None
-}
-
-# We need Linear + at least one NN to compare
-if 'Linear Interpolation' not in valid_candidates or len(valid_candidates) < 2:
-    print("Skipping gap: not enough valid methods (need Linear + at least one NN).")
-    raise SystemExit(2)
-
-best_method = min(valid_candidates, key=valid_candidates.get)
-
-if best_method not in ['3 Point Prediction', '9 Point Prediction']:
-    print(f"Skipping gap: best method is '{best_method}', not a neural network.")
-    raise SystemExit(3)
+rmse_df = (
+    pd.DataFrame({"Method": list(rmse_results.keys()), "RMSE": list(rmse_results.values())})
+    .sort_values("RMSE", na_position="last")
+    .reset_index(drop=True)
+)
 
 # ------------------------------------------------------------------
-# Prepare to plot (only selected methods for visual clarity)
+# NAMING CONVENTION
+# ------------------------------------------------------------------
+gap_tag = f"{gap_start.strftime('%Y%m%d')}_{gap_end.strftime('%Y%m%d')}"
+prefix_metrics = f"metrics_rmse_{gap_tag}"
+prefix_plot = f"plot_gapfill_{gap_tag}"
+prefix_data = f"data_gapfill_{gap_tag}"
+prefix_spec = f"spectral_{gap_tag}"
+
+# ------------------------------------------------------------------
+# PLOT: original + all methods (over plot window)
 # ------------------------------------------------------------------
 plot_values = values.loc[plot_start:plot_end]
-plot_methods = {}
 
-# Only plot selected methods for clarity
-methods_to_plot = ['Linear Interpolation', 'Cubic', '3 Point Prediction', '9 Point Prediction']
+fig, ax = plt.subplots(figsize=(9, 3.2), dpi=600)
 
-for method_name in methods_to_plot:
-    if method_name in methods:
-        plot_methods[method_name] = methods[method_name].loc[gap_start:gap_end]
+ax.plot(plot_values.index, plot_values, label="Original", color="blue", linewidth=0.8)
+ax.scatter(plot_values.index, plot_values, color="blue", s=2, alpha=0.7)
 
-plt.rcParams['figure.dpi'] = 300
-plt.rcParams['savefig.dpi'] = 300
+# Plot each method only in the gap (for clarity) but you can change to full if you want
+for name in ["Linear", "Cubic", "3pt_NN", "9pt_NN"]:
+    s = methods[name].loc[gap_start:gap_end]
+    rmse = rmse_results.get(name, np.nan)
+    rmse_str = "NA" if not np.isfinite(rmse) else f"{rmse:.4f}"
 
-plt.figure(figsize=(8, 3))
-plt.plot(plot_values.index, plot_values, label='Original Data', color='blue', linewidth=2)
+    label = f"{name} (RMSE: {rmse_str})"
+    style = "--"
+    lw = 1.6
 
-for method_name, method_values in plot_methods.items():
-    rmse_str = f'{rmse_results.get(method_name, "N/A"):.4f}' if rmse_results.get(method_name) is not None else "N/A"
-    
-    # Custom labels for neural networks
-    if method_name == '3 Point Prediction':
-        label = f'3 Input Model (RMSE: {rmse_str})'
-    elif method_name == '9 Point Prediction':
-        label = f'9 Input Model (RMSE: {rmse_str})'
-        plt.plot(
-            method_values.index,
-            method_values,
-            label=label,
-            color='black',
-            linestyle='--',
-            linewidth=4
-        )
-        continue
+    # Slight styling tweak
+    if name == "9pt_NN":
+        ax.plot(s.index, s, label=label, color="black", linestyle=style, linewidth=lw)
     else:
-        label = f'{method_name} (RMSE: {rmse_str})'
-    
-    plt.plot(
-        method_values.index,
-        method_values,
-        label=label,
-        linestyle='--'
+        ax.plot(s.index, s, label=label, linestyle=style, linewidth=lw)
+
+# Gap markers
+ax.axvline(gap_start, color="blue", linestyle="--", linewidth=1)
+ax.axvline(gap_end, color="blue", linestyle="--", linewidth=1)
+
+ax.set_xlim(plot_start, plot_end)
+ax.set_ylim(0, 2)
+ax.set_yticks(np.arange(0, 2.01, 0.25))
+ax.set_ylabel("Chlorophyll-a (mg m$^{-3}$)", fontsize=9)
+
+ax.grid(True, linestyle="--", alpha=0.4)
+
+ax.xaxis.set_major_locator(mdates.MonthLocator())
+ax.xaxis.set_major_formatter(mdates.DateFormatter("%b"))
+ax.tick_params(axis="x", which="major", labelsize=8)
+
+ax.legend(loc="upper left", fontsize=8, frameon=True)
+fig.tight_layout()
+
+plot_png = os.path.join(OUT_DIR, f"{prefix_plot}.png")
+plot_eps = os.path.join(OUT_DIR, f"{prefix_plot}.eps")
+fig.savefig(plot_png, dpi=600, bbox_inches="tight")
+fig.savefig(plot_eps, dpi=600, bbox_inches="tight")
+plt.show()
+
+# ------------------------------------------------------------------
+# CSV: original + (2 columns per method)
+#   - <method>_full: original everywhere except gap replaced by method
+#   - <method>_gap_only: only gap values, NaN elsewhere
+# ------------------------------------------------------------------
+export_idx = plot_values.index
+export_df = pd.DataFrame(index=export_idx)
+export_df["Original"] = plot_values
+
+gap_mask_export = (export_df.index >= gap_start) & (export_df.index <= gap_end)
+
+for name in ["Linear", "Cubic", "3pt_NN", "9pt_NN"]:
+    method_series_window = methods[name].reindex(export_idx)
+
+    # full: original data but gap replaced by method
+    full_col = export_df["Original"].copy()
+    full_col.loc[gap_mask_export] = method_series_window.loc[gap_mask_export]
+
+    # gap-only: only gap filled values
+    gap_only_col = pd.Series(np.nan, index=export_idx, dtype=float)
+    gap_only_col.loc[gap_mask_export] = method_series_window.loc[gap_mask_export]
+
+    export_df[f"{name}_full"] = full_col
+    export_df[f"{name}_gap_only"] = gap_only_col
+
+data_csv = os.path.join(OUT_DIR, f"{prefix_data}.csv")
+export_df.to_csv(data_csv)
+
+# Also save RMSE table
+rmse_csv = os.path.join(OUT_DIR, f"{prefix_metrics}.csv")
+rmse_df.to_csv(rmse_csv, index=False)
+
+# ------------------------------------------------------------------
+# SPECTRAL ANALYSIS (FFT) on:
+#   - Original (with gap removed -> resample -> interpolate)
+#   - Each method FULL series (original with gap filled by that method)
+# Outputs:
+#   - spectral_<gapTag>.csv (frequency + amplitude columns)
+#   - spectral_<gapTag>.png (overlay plot)
+# ------------------------------------------------------------------
+def _prepare_uniform_series(s: pd.Series) -> pd.Series:
+    """Resample to uniform daily grid and interpolate for FFT stability."""
+    s = s.sort_index()
+    s_u = s.resample(FFT_RESAMPLE_FREQ).mean()
+    # Fill missing for FFT
+    s_u = s_u.interpolate(method=FFT_INTERP_METHOD).ffill().bfill()
+    return s_u
+
+def _fft_amplitude(s_uniform: pd.Series) -> pd.DataFrame:
+    """Return one-sided amplitude spectrum for a uniformly spaced series."""
+    x = s_uniform.to_numpy(dtype=float)
+    n = len(x)
+
+    # Detrend (remove mean)
+    x = x - np.nanmean(x)
+
+    # Windowing
+    if WINDOW is None:
+        w = np.ones(n)
+        cg = 1.0
+    elif WINDOW == "hann":
+        w = np.hanning(n)
+        cg = np.mean(w) if np.mean(w) != 0 else 1.0  # coherent gain
+    else:
+        raise ValueError("WINDOW must be None or 'hann'")
+
+    xw = x * w
+
+    # Sampling interval in days (since we resampled daily)
+    dt_days = pd.to_timedelta(pd.tseries.frequencies.to_offset(FFT_RESAMPLE_FREQ)).total_seconds() / 86400.0
+
+    # FFT
+    fft_vals = np.fft.rfft(xw)
+    freqs = np.fft.rfftfreq(n, d=dt_days)  # cycles per day
+
+    # One-sided amplitude (scaled, window-corrected)
+    amp = (2.0 / n) * np.abs(fft_vals) / cg
+    amp[0] = amp[0] / 2.0  # DC component not doubled
+
+    out = pd.DataFrame({"freq_cpd": freqs, "amplitude": amp})
+    # Add period in days (avoid div0)
+    out["period_days"] = np.where(out["freq_cpd"] > 0, 1.0 / out["freq_cpd"], np.inf)
+    return out
+
+# Build series to analyze
+series_for_fft = {}
+
+# Original with gap still present (then interpolated after resample)
+series_for_fft["Original_gap"] = values_with_gap.loc[plot_start:plot_end]
+
+# Method FULL series in the window (original with gap replaced)
+for name in ["Linear", "Cubic", "3pt_NN", "9pt_NN"]:
+    s_win = export_df[f"{name}_full"]  # already windowed index
+    series_for_fft[name] = s_win
+
+# Compute spectra
+spec_df = None
+spec_cache = {}
+
+for name, s in series_for_fft.items():
+    s_u = _prepare_uniform_series(s)
+    spec = _fft_amplitude(s_u)
+    spec_cache[name] = spec
+
+    if spec_df is None:
+        spec_df = spec[["freq_cpd", "period_days"]].copy()
+    spec_df[f"amp_{name}"] = spec["amplitude"].to_numpy()
+
+# Save spectral CSV
+spec_csv = os.path.join(OUT_DIR, f"{prefix_spec}.csv")
+spec_df.to_csv(spec_csv, index=False)
+
+# Plot spectra (amplitude vs period in days on log x for readability)
+fig2, ax2 = plt.subplots(figsize=(9, 3.2), dpi=600)
+
+# Avoid the inf period (DC); plot from index 1 onward
+plot_spec = spec_df.iloc[1:].copy()
+
+for name in series_for_fft.keys():
+    ax2.plot(
+        plot_spec["period_days"],
+        plot_spec[f"amp_{name}"],
+        label=name,
+        linewidth=1.2,
     )
 
-plt.ylabel('Chlorophyll Concentration (mg/m\u00b3)\n', fontsize=7)
-plt.legend(loc='best', prop={'size': 6})
-plt.xticks(rotation='horizontal', fontsize=6)
-plt.ylim(0, 1.75)
-plt.grid()
+ax2.set_xscale("log")
+ax2.set_xlabel("Period (days, log scale)")
+ax2.set_ylabel("Amplitude (a.u.)")
+ax2.grid(True, linestyle="--", alpha=0.4)
+ax2.legend(fontsize=8, frameon=True)
+fig2.tight_layout()
 
-plot_filename = f'plots/Chlorophyll_Gap_Filling_{gap_start.strftime("%Y%m%d")}_{gap_end.strftime("%Y%m%d")}.png'
-plt.savefig(plot_filename)
-plot_filename = f'plots/Chlorophyll_Gap_Filling_{gap_start.strftime("%Y%m%d")}_{gap_end.strftime("%Y%m%d")}.eps'
-plt.savefig(plot_filename)
-plt.close()
+spec_png = os.path.join(OUT_DIR, f"{prefix_spec}.png")
+spec_eps = os.path.join(OUT_DIR, f"{prefix_spec}.eps")
+fig2.savefig(spec_png, dpi=600, bbox_inches="tight")
+fig2.savefig(spec_eps, dpi=600, bbox_inches="tight")
+plt.show()
+
+print("Saved:")
+print(" ", data_csv)
+print(" ", rmse_csv)
+print(" ", plot_png)
+print(" ", plot_eps)
+print(" ", spec_csv)
+print(" ", spec_png)
+print(" ", spec_eps)

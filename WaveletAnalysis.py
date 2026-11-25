@@ -51,9 +51,12 @@ print(f"Std value: {original_values.std():.4f}")
 # ============================================================================
 # 2. INTRODUCE ARTIFICIAL GAP
 # ============================================================================
+# This 2015-16 period is an external synthetic-gap test: Est5 values in the
+# gap are saved as ground truth and removed only for method evaluation.
+# It is outside the 2018-2020 training date window configured in Data/Dates.csv.
 print("\n[2] Introducing artificial gap...")
-gap_start_idx = 90
-gap_length = 30
+gap_start_idx = 117
+gap_length = 23
 gap_end_idx = gap_start_idx + gap_length
 
 # Create series with gap
